@@ -1,0 +1,132 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #FFFFFF;
+  min-height: 100vh;
+  color: #1D1D1F;
+}
+
+/* Apple-style scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* Apple-style paper components */
+.MuiPaper-root {
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.MuiPaper-root:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* Apple-style buttons */
+.MuiButton-root {
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.MuiButton-contained {
+  background: #000000;
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+.MuiButton-contained:hover {
+  background: #1C1C1E;
+  transform: translateY(-1px);
+}
+
+.MuiButton-outlined {
+  border-color: #000000;
+  color: #000000;
+}
+
+.MuiButton-outlined:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: #000000;
+}
+
+/* Apple-style cards */
+.MuiCard-root {
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.MuiCard-root:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* Apple-style chips */
+.MuiChip-root {
+  font-weight: 500;
+  border-radius: 16px;
+}
+
+/* Apple-style switches */
+.MuiSwitch-root .MuiSwitch-switchBase.Mui-checked {
+  color: #000000;
+}
+
+.MuiSwitch-root .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track {
+  background-color: #000000;
+}
+
+/* Apple-style sliders */
+.MuiSlider-root .MuiSlider-thumb {
+  background-color: #000000;
+}
+
+.MuiSlider-root .MuiSlider-track {
+  background-color: #000000;
+}
+
+.MuiSlider-root .MuiSlider-rail {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive design */
+@media (max-width: 1200px) {
+  .MuiContainer-root {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .MuiContainer-root {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  
+  .MuiGrid-item {
+    margin-bottom: 24px;
+  }
+}
+
+@media (max-width: 600px) {
+  .MuiContainer-root {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+}

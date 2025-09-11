@@ -142,6 +142,12 @@ docker-compose up -d
 docker-compose down
 ```
 
+#### Backend Only
+```bash
+# Build and run backend
+docker build -t retail-vision .
+docker run -p 8000:8000 retail-vision
+```
 
 ## 🚀 Running the Application
 
