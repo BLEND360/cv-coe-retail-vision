@@ -6,10 +6,13 @@ import {
   CardContent, 
   IconButton, 
   Button,
-  Divider,
   Chip,
   Grid,
-  Paper
+  Paper,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel
 } from '@mui/material';
 import { 
   ShoppingCart as ShoppingCartIcon, 
@@ -25,18 +28,24 @@ interface CartItem {
   quantity: number;
   detectionId: number;
   confidence: number;
+  size?: string;
+  color?: string;
 }
 
 interface ShoppingCartProps {
   cartItems: CartItem[];
   onRemoveItem: (itemId: string) => void;
   onUpdateQuantity: (itemId: string, newQuantity: number) => void;
+  onUpdateSize: (itemId: string, newSize: string) => void;
+  onUpdateColor: (itemId: string, newColor: string) => void;
 }
 
 const ShoppingCart: React.FC<ShoppingCartProps> = ({ 
   cartItems, 
   onRemoveItem, 
-  onUpdateQuantity 
+  onUpdateQuantity,
+  onUpdateSize,
+  onUpdateColor
 }) => {
   const totalPrice = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const totalItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -45,9 +54,41 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
     return str.charAt(0).toUpperCase() + str.slice(1);
   };
 
+  // Color mapping for visual display
+  const colorMap: { [key: string]: string } = {
+    'Black': '#000000',
+    'White': '#FFFFFF',
+    'Gray': '#808080',
+    'Navy': '#000080',
+    'Red': '#DC143C',
+    'Blue': '#1E90FF',
+    'Green': '#228B22',
+    'Brown': '#8B4513',
+    'Beige': '#F5F5DC'
+  };
+
+  const ColorCircle = ({ color }: { color: string }) => (
+    <Box
+      sx={{
+        width: 24,
+        height: 24,
+        borderRadius: '50%',
+        bgcolor: colorMap[color],
+        border: color === 'White' ? '1px solid #E0E0E0' : '1px solid transparent',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+      }}
+    />
+  );
+
   const handleQuantityChange = (itemId: string, currentQuantity: number, delta: number) => {
     const newQuantity = currentQuantity + delta;
     onUpdateQuantity(itemId, newQuantity);
+  };
+
+  // Check if item is clothing (needs size and color options)
+  const isClothingItem = (itemName: string) => {
+    const clothingItems = ['blazer', 'shirt', 'shorts'];
+    return clothingItems.includes(itemName.toLowerCase());
   };
 
   if (cartItems.length === 0) {
@@ -172,7 +213,7 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
                         <Typography 
                           variant="h6" 
                           sx={{ 
-                            mb: 0.5,
+                            mb: isClothingItem(item.name) ? 1.5 : 0.5,
                             color: 'text.primary',
                             fontSize: '1.1rem',
                             fontWeight: 600
@@ -180,6 +221,98 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
                         >
                           {capitalizeFirstLetter(item.name)}
                         </Typography>
+                        
+                        {/* Clothing items: Show size and color options */}
+                        {isClothingItem(item.name) && item.size && item.color && (
+                          <Box sx={{ display: 'flex', gap: 1.5, mt: 1 }}>
+                            <FormControl size="small" sx={{ minWidth: 80 }}>
+                              <InputLabel sx={{ fontSize: '0.75rem' }}>Size</InputLabel>
+                              <Select
+                                value={item.size}
+                                label="Size"
+                                onChange={(e) => onUpdateSize(item.id, e.target.value)}
+                                sx={{ 
+                                  fontSize: '0.875rem',
+                                  '& .MuiOutlinedInput-notchedOutline': {
+                                    borderColor: 'grey.300'
+                                  }
+                                }}
+                              >
+                                <MenuItem value="XS">XS</MenuItem>
+                                <MenuItem value="S">S</MenuItem>
+                                <MenuItem value="M">M</MenuItem>
+                                <MenuItem value="L">L</MenuItem>
+                                <MenuItem value="XL">XL</MenuItem>
+                                <MenuItem value="XXL">XXL</MenuItem>
+                              </Select>
+                            </FormControl>
+                            <FormControl size="small" sx={{ minWidth: 80 }}>
+                              <InputLabel sx={{ fontSize: '0.75rem' }}>Color</InputLabel>
+                              <Select
+                                value={item.color}
+                                label="Color"
+                                onChange={(e) => onUpdateColor(item.id, e.target.value)}
+                                renderValue={(selected) => (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color={selected} />
+                                  </Box>
+                                )}
+                                sx={{ 
+                                  fontSize: '0.875rem',
+                                  '& .MuiOutlinedInput-notchedOutline': {
+                                    borderColor: 'grey.300'
+                                  }
+                                }}
+                              >
+                                <MenuItem value="Black">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Black" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="White">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="White" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Gray">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Gray" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Navy">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Navy" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Red">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Red" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Blue">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Blue" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Green">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Green" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Brown">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Brown" />
+                                  </Box>
+                                </MenuItem>
+                                <MenuItem value="Beige">
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ColorCircle color="Beige" />
+                                  </Box>
+                                </MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Box>
+                        )}
                       </Box>
                       <IconButton 
                         size="small" 

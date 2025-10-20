@@ -13,6 +13,8 @@ interface CartItem {
   quantity: number;
   detectionId: number;
   confidence: number;
+  size?: string;
+  color?: string;
 }
 
 const theme = createTheme({
@@ -134,13 +136,19 @@ function App() {
 
   const addToCart = (detection: { id: number; class_name: string; confidence: number }) => {
     const cartItemId = `${detection.id}-${Date.now()}`;
+    
+    // List of clothing items that need size and color options
+    const clothingItems = ['blazer', 'shirt', 'shorts'];
+    const isClothing = clothingItems.includes(detection.class_name.toLowerCase());
+    
     const newItem: CartItem = {
       id: cartItemId,
       name: detection.class_name,
       price: 99,
       quantity: 1,
       detectionId: detection.id,
-      confidence: detection.confidence
+      confidence: detection.confidence,
+      ...(isClothing && { size: 'M', color: 'Black' })
     };
     setCartItems(prev => [...prev, newItem]);
   };
@@ -157,6 +165,22 @@ function App() {
     setCartItems(prev => 
       prev.map(item => 
         item.id === itemId ? { ...item, quantity: newQuantity } : item
+      )
+    );
+  };
+
+  const updateSize = (itemId: string, newSize: string) => {
+    setCartItems(prev => 
+      prev.map(item => 
+        item.id === itemId ? { ...item, size: newSize } : item
+      )
+    );
+  };
+
+  const updateColor = (itemId: string, newColor: string) => {
+    setCartItems(prev => 
+      prev.map(item => 
+        item.id === itemId ? { ...item, color: newColor } : item
       )
     );
   };
@@ -337,6 +361,8 @@ function App() {
                     cartItems={cartItems}
                     onRemoveItem={removeFromCart}
                     onUpdateQuantity={updateQuantity}
+                    onUpdateSize={updateSize}
+                    onUpdateColor={updateColor}
                   />
                 </Paper>
               </Box>
