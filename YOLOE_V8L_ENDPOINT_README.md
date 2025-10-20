@@ -182,3 +182,8 @@ All dependencies are already included in your existing setup.
 The endpoint is now ready to provide efficient, text-prompted object detection and segmentation using the YOLO-E v8l model! 🚀
 
 
+
+
+
+
+
