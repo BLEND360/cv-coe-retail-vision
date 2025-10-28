@@ -87,7 +87,7 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
 
   // Check if item is clothing (needs size and color options)
   const isClothingItem = (itemName: string) => {
-    const clothingItems = ['blazer', 'shirt', 'shorts'];
+    const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
     return clothingItems.includes(itemName.toLowerCase());
   };
 

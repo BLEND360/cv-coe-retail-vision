@@ -16,7 +16,8 @@ import supervision as sv
 
 # Single source of truth for YOLOE classes
 YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
-                 "monitor", "trash can", "chair", "shirt"]
+                 "monitor", "trash can", "chair", "shirt", "running pants",
+                 "running shoes", "jacket", "gloves"]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models and video on application startup."""
-    video_path = "../../static/videos/The BLEND360 Approach.mp4"
+    video_path = "../public/Under-Armour.mp4"
 
     if not load_video(video_path):
         logger.error("Failed to load video on startup.")

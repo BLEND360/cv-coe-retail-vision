@@ -220,7 +220,7 @@ The application uses YOLO-E models for efficient edge-optimized inference:
 ### Video Configuration
 Update the video path in `retail-vision-ui/backend/main.py`:
 ```python
-video_path = "static/videos/The BLEND360 Approach.mp4"
+video_path = "../public/Under-Armour.mp4"
 ```
 
 ### Environment Variables
@@ -242,7 +242,7 @@ REACT_APP_API_URL=http://localhost:8000
 ### YOLO-E Model Details
 The application uses YOLO-E v8l with the following features:
 - **Text Prompts**: Supports custom object classes via text descriptions
-- **Default Classes**: `["laptop", "headphones", "glasses", "blazer", "desk", "watch", "monitor", "trash can", "chair", "shirt"]`
+- **Default Classes**: `["laptop", "headphones", "glasses", "blazer", "desk", "watch", "monitor", "trash can", "chair", "shirt", "running pants", "running shoes", "jacket", "gloves"]`
 - **Confidence Threshold**: 0.1 (configurable)
 - **MobileCLIP Integration**: Enables text-to-image understanding for enhanced object recognition
 

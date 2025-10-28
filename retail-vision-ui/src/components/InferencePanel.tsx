@@ -49,7 +49,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
   const [showAnnotated, setShowAnnotated] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [inferenceType] = useState<InferenceType>('yolo-e');
-  const [textPrompt] = useState<string>('laptop, headphones, glasses, blazer, desk, watch, monitor, trash can, chair, shirt');
+  const [textPrompt] = useState<string>('laptop, headphones, glasses, blazer, desk, watch, monitor, trash can, chair, shirt, running pants, running shoes, jacket, gloves');
   const addedDetectionsRef = useRef<Set<string>>(new Set());
   const lastInferenceTimestampRef = useRef<number>(0);
 

@@ -4,6 +4,7 @@ import { CssBaseline, Box, Paper, Typography, Switch, FormControlLabel } from '@
 import VideoPlayer from './components/VideoPlayer';
 import InferencePanel from './components/InferencePanel';
 import ShoppingCart from './components/ShoppingCart';
+import underArmourLogo from './assets/under-armour-logo.png';
 import './App.css';
 
 interface CartItem {
@@ -138,7 +139,7 @@ function App() {
     const cartItemId = `${detection.id}-${Date.now()}`;
     
     // List of clothing items that need size and color options
-    const clothingItems = ['blazer', 'shirt', 'shorts'];
+    const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
     const isClothing = clothingItems.includes(detection.class_name.toLowerCase());
     
     const newItem: CartItem = {
@@ -193,8 +194,29 @@ function App() {
         bgcolor: 'background.default',
         background: '#FFFFFF',
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        position: 'relative'
       }}>
+        {/* Logo in upper left corner */}
+        <Box sx={{ 
+          position: 'absolute',
+          top: 24,
+          left: 24,
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center'
+        }}>
+          <img 
+            src={underArmourLogo} 
+            alt="Under Armour" 
+            style={{ 
+              height: '112px',
+              width: 'auto',
+              objectFit: 'contain'
+            }} 
+          />
+        </Box>
+
         {/* Header Section */}
         <Box sx={{ 
           py: 4, 

@@ -29,7 +29,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ onTimeUpdate, onVideoClick })
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
 
-  const videoUrl = "/The BLEND360 Approach.mp4";
+  const videoUrl = "/Under-Armour.mp4";
 
   useEffect(() => {
     const video = videoRef.current;
