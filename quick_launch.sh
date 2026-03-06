@@ -1,9 +1,31 @@
 #!/bin/bash
 
 # Quick Launch Script for Retail Vision
-# Simple version for quick development
+# Usage:
+#   ./quick_launch.sh                    # Launch with Under Armour (default)
+#   ./quick_launch.sh under-armour       # Launch with Under Armour
+#   ./quick_launch.sh blend360           # Launch with BLEND360
 
 set -e
+
+BRAND="${1:-under-armour}"
+
+# Map brand to video file
+case "$BRAND" in
+  under-armour)
+    VIDEO_PATH="../public/Under-Armour.mp4"
+    echo "Brand: Under Armour"
+    ;;
+  blend360)
+    VIDEO_PATH="../public/The BLEND360 Approach.mp4"
+    echo "Brand: BLEND360"
+    ;;
+  *)
+    echo "Unknown brand: $BRAND"
+    echo "Available brands: under-armour, blend360"
+    exit 1
+    ;;
+esac
 
 echo "Quick Launch - Retail Vision"
 echo "============================"
@@ -18,7 +40,7 @@ echo "Ports cleared"
 echo "Starting backend..."
 cd retail-vision-ui/backend
 source venv/bin/activate
-nohup python run_backend.py > ../backend.log 2>&1 &
+VIDEO_PATH="$VIDEO_PATH" nohup python run_backend.py > ../backend.log 2>&1 &
 BACKEND_PID=$!
 cd ../..
 echo "Backend started (PID: $BACKEND_PID)"
@@ -26,7 +48,7 @@ echo "Backend started (PID: $BACKEND_PID)"
 # Start frontend
 echo "Starting frontend..."
 cd retail-vision-ui
-nohup npm start > frontend.log 2>&1 &
+REACT_APP_BRAND="$BRAND" nohup npm start > frontend.log 2>&1 &
 FRONTEND_PID=$!
 cd ..
 echo "Frontend started (PID: $FRONTEND_PID)"

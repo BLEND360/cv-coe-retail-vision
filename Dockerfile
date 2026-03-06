@@ -1,11 +1,12 @@
 # Multi-stage Dockerfile for Retail Vision Application
 # Supports both CPU and GPU (NVIDIA CUDA) automatically
 #
-# CPU build (default):  docker build -t retail-vision .
-# GPU build:            docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
+# CPU build (default):   docker build -t retail-vision .
+# GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
+# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
 #
-# CPU run:              docker run -p 8000:8000 retail-vision
-# GPU run:              docker run --gpus all -p 8000:8000 retail-vision-gpu
+# CPU run:               docker run -p 8000:8000 retail-vision
+# GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
 
 ARG BASE_IMAGE=python:3.11-slim
 
@@ -25,8 +26,11 @@ COPY retail-vision-ui/src ./src
 COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
-# Build the application — empty API URL makes frontend use relative URLs (same origin)
-ENV REACT_APP_API_URL=""
+# Build the application
+# BRAND arg selects logo, video, and tagline (default: under-armour)
+ARG BRAND=under-armour
+ENV REACT_APP_API_URL="" \
+    REACT_APP_BRAND=${BRAND}
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies

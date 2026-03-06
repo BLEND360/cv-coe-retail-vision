@@ -309,9 +309,10 @@ build/
 *.h5
 *.pb
 *.tflite
-*.ts
 *.bin
 *.safetensors
+# TorchScript models (not TypeScript .ts files)
+retail-vision-ui/backend/*.ts
 
 # Model checkpoints and training artifacts
 checkpoints/
