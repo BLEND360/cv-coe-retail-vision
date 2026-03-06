@@ -78,7 +78,8 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
         requestBody.text_prompt = textPrompt;
       }
 
-      const response = await fetch(`http://localhost:8000${endpoint}`, {
+      const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBase}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

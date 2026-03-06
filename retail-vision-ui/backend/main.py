@@ -1,8 +1,10 @@
+import asyncio
 import cv2
 import numpy as np
 from ultralytics import YOLOE
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
@@ -27,7 +29,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models and video on application startup."""
-    video_path = "../public/Under-Armour.mp4"
+    # Support both local dev and Docker paths
+    video_path = os.environ.get("VIDEO_PATH", "../public/Under-Armour.mp4")
 
     if not load_video(video_path):
         logger.error("Failed to load video on startup.")
@@ -57,15 +60,26 @@ app = FastAPI(lifespan=lifespan)
 # CORS middleware to allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Serve frontend static files if available (Docker deployment)
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/var/www/html")
+if os.path.isdir(FRONTEND_DIR):
+    # Mount /static for JS/CSS bundles
+    static_dir = os.path.join(FRONTEND_DIR, "static")
+    if os.path.isdir(static_dir):
+        app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
+
 # Global variables for model and video capture
 video_cap = None
 yolo_e_model = None
+# Cache for text embeddings to avoid rebuilding mobileclip on every request
+_cached_text_pe = None
+_cached_prompt_key = None
 
 
 class ClickInferenceRequest(BaseModel):
@@ -179,27 +193,9 @@ def load_yolo_e_model():
         try:
             yolo_e_model = YOLOE(model_path)
 
-            # Set default classes to limited retail items
-            try:
-                # Try to get text embeddings safely
-                try:
-                    text_pe = yolo_e_model.get_text_pe(YOLOE_CLASSES)
-                    yolo_e_model.set_classes(YOLOE_CLASSES, text_pe)
-                    logger.info(f"YOLO-E v8l model loaded with limited classes: "
-                               f"{YOLOE_CLASSES}")
-                except Exception as pe_error:
-                    logger.warning(f"Could not get text embeddings: {pe_error}")
-                    # Fallback: try setting classes without text embeddings
-                    try:
-                        yolo_e_model.set_classes(YOLOE_CLASSES)
-                        logger.info(f"YOLO-E v8l model loaded with limited classes (fallback): "
-                                   f"{YOLOE_CLASSES}")
-                    except Exception as fallback_error:
-                        logger.warning(f"Could not set default classes: {fallback_error}")
-                        logger.info("YOLO-E v8l model loaded successfully")
-            except Exception as class_error:
-                logger.warning(f"Could not set default classes: {class_error}")
-                logger.info("YOLO-E v8l model loaded successfully")
+            # Set default classes to limited retail items (also caches embeddings)
+            _set_classes_cached(YOLOE_CLASSES)
+            logger.info(f"YOLO-E v8l model loaded with limited classes: {YOLOE_CLASSES}")
 
             return True
         except Exception as load_error:
@@ -303,6 +299,26 @@ def find_object_at_pixel(
     return None
 
 
+def _set_classes_cached(prompt_classes: List[str]):
+    """Set model classes with cached text embeddings to avoid rebuilding mobileclip."""
+    global _cached_text_pe, _cached_prompt_key
+    prompt_key = tuple(prompt_classes)
+    if _cached_prompt_key == prompt_key and _cached_text_pe is not None:
+        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
+        return
+    try:
+        _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
+        _cached_prompt_key = prompt_key
+        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
+        logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
+    except Exception as pe_error:
+        logger.warning(f"Could not get text embeddings: {pe_error}")
+        try:
+            yolo_e_model.set_classes(prompt_classes)
+        except Exception as fallback_error:
+            logger.warning(f"Could not set text prompts at all: {fallback_error}")
+
+
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                         text_prompt: str = None) -> Dict[str, Any]:
     """Run YOLO-E inference - simple and direct like your reference code"""
@@ -320,19 +336,7 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                 prompt_classes = [cls.strip() for cls in text_prompt.split(',')
                                 if cls.strip()]
                 if prompt_classes:
-                    # Try to get text embeddings safely
-                    try:
-                        text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                        yolo_e_model.set_classes(prompt_classes, text_pe)
-                        logger.info(f"YOLO-E text prompts set: {prompt_classes}")
-                    except Exception as pe_error:
-                        logger.warning(f"Could not get text embeddings: {pe_error}")
-                        # Fallback: try setting classes without text embeddings
-                        try:
-                            yolo_e_model.set_classes(prompt_classes)
-                            logger.info(f"YOLO-E text prompts set (fallback): {prompt_classes}")
-                        except Exception as fallback_error:
-                            logger.warning(f"Could not set text prompts at all: {fallback_error}")
+                    _set_classes_cached(prompt_classes)
                 else:
                     logger.warning("No valid classes found in text prompt")
             except Exception as e:
@@ -507,23 +511,8 @@ def run_yolo_e_v8l_inference(
         if not prompt_classes:
             return {"error": "No valid classes found in text prompt"}
 
-        # Set classes and text prompts using the clean approach from reference code
-        try:
-            # Try to get text embeddings safely
-            try:
-                text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                yolo_e_model.set_classes(prompt_classes, text_pe)
-                logger.info(f"YOLO-E v8l text prompts set: {prompt_classes}")
-            except Exception as pe_error:
-                logger.warning(f"Could not get text embeddings: {pe_error}")
-                # Fallback: try setting classes without text embeddings
-                try:
-                    yolo_e_model.set_classes(prompt_classes)
-                    logger.info(f"YOLO-E v8l text prompts set (fallback): {prompt_classes}")
-                except Exception as fallback_error:
-                    logger.warning(f"Could not set text prompts, using default: {fallback_error}")
-        except Exception as e:
-            logger.warning(f"Could not set text prompts, using default: {e}")
+        # Set classes with cached text embeddings
+        _set_classes_cached(prompt_classes)
 
         # Run YOLO-E inference - exactly like your reference code
         results = yolo_e_model.predict(pil_image, conf=confidence, verbose=False)
@@ -598,8 +587,8 @@ def run_yolo_e_v8l_inference(
 
 
 
-@app.get("/")
-async def read_root():
+@app.get("/api/health")
+async def health_check():
     return {"message": "Retail Vision Backend API"}
 
 
@@ -637,9 +626,9 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
         logger.info(f"Requested frame dimensions: "
                    f"{request.frame_width}x{request.frame_height}")
 
-        # Run YOLO-E inference - simple and direct like your reference code
-        inference_result = run_yolo_e_inference(
-            frame, request.x, request.y, request.text_prompt
+        # Run YOLO-E inference in thread pool to avoid blocking the event loop
+        inference_result = await asyncio.to_thread(
+            run_yolo_e_inference, frame, request.x, request.y, request.text_prompt
         )
 
         if "error" in inference_result:
@@ -696,24 +685,10 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
                 status_code=400, detail="No valid classes found in text prompt"
             )
 
-        # Update the model's text prompts using the correct YOLOE pattern
+        # Update the model's text prompts (invalidates cache for new prompt)
         try:
-            # Try to get text embeddings safely
-            try:
-                text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                yolo_e_model.set_classes(prompt_classes, text_pe)
-                logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
-            except Exception as pe_error:
-                logger.warning(f"Could not get text embeddings: {pe_error}")
-                # Fallback: try setting classes without text embeddings
-                try:
-                    yolo_e_model.set_classes(prompt_classes)
-                    logger.info(f"YOLO-E text prompts updated (fallback): {prompt_classes}")
-                except Exception as fallback_error:
-                    logger.warning(f"Could not update text prompts: {fallback_error}")
-                    raise HTTPException(
-                        status_code=500, detail=f"Could not update text prompts: {fallback_error}"
-                    )
+            _set_classes_cached(prompt_classes)
+            logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
         except Exception as e:
             logger.error(f"Failed to update YOLO-E text prompts: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -781,9 +756,9 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
             cv2.putText(frame, "No video loaded", (50, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Run YOLO-E v8l inference
-        inference_result = run_yolo_e_v8l_inference(
-            frame, request.text_prompt, request.confidence
+        # Run YOLO-E v8l inference in thread pool to avoid blocking the event loop
+        inference_result = await asyncio.to_thread(
+            run_yolo_e_v8l_inference, frame, request.text_prompt, request.confidence
         )
 
         if "error" in inference_result:
@@ -858,6 +833,11 @@ async def get_yolo_e_v8l_status():
     except Exception as e:
         logger.error(f"Failed to get YOLO-E v8l status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Serve frontend as SPA with html=True (handles Range requests for video + client-side routing)
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend-spa")
 
 
 if __name__ == "__main__":
