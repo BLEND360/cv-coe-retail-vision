@@ -321,7 +321,7 @@ wandb/
 mlruns/
 
 # Video files (large media files)
-*.mp4
+# Note: Under-Armour.mp4 is force-tracked for the demo
 *.avi
 *.mov
 *.mkv
@@ -346,8 +346,7 @@ mlruns/
 *.aac
 *.ogg
 
-# Docker
-.dockerignore
+# Docker (note: .dockerignore is tracked)
 
 # IDE and Editor files
 .vscode/
@@ -429,8 +428,6 @@ jupyter_lab_config.py
 
 # Large data files
 *.csv
-*.json
-*.xml
 *.parquet
 *.feather
 
