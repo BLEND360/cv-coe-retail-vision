@@ -1,4 +1,13 @@
 # Multi-stage Dockerfile for Retail Vision Application
+# Supports both CPU and GPU (NVIDIA CUDA) automatically
+#
+# CPU build (default):  docker build -t retail-vision .
+# GPU build:            docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
+#
+# CPU run:              docker run -p 8000:8000 retail-vision
+# GPU run:              docker run --gpus all -p 8000:8000 retail-vision-gpu
+
+ARG BASE_IMAGE=python:3.11-slim
 
 # Stage 1: Build React frontend
 FROM node:18-alpine AS frontend-build
@@ -21,7 +30,7 @@ ENV REACT_APP_API_URL=""
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
-FROM python:3.11-slim AS backend-base
+FROM ${BASE_IMAGE} AS backend-base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -30,11 +39,14 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install system dependencies including OpenGL for OpenCV
+# Works on both debian-based (python:slim) and ubuntu-based (nvidia/cuda) images
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
     git \
+    python3-dev \
+    python3-pip \
     libgl1-mesa-dev \
     libgl1 \
     libglib2.0-0 \
@@ -46,10 +58,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure python/pip are available (nvidia images use python3)
+RUN if ! command -v python &> /dev/null; then \
+        ln -s /usr/bin/python3 /usr/bin/python && \
+        ln -s /usr/bin/pip3 /usr/bin/pip; \
+    fi
+
 # Set working directory
 WORKDIR /app
 
 # Copy Python requirements and install dependencies
+# For GPU images, PyTorch with CUDA is installed via requirements
 COPY retail-vision-ui/backend/requirements.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 

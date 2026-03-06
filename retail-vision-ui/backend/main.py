@@ -15,6 +15,7 @@ from PIL import Image
 import os
 import urllib.request
 import supervision as sv
+import torch
 
 # Single source of truth for YOLOE classes
 YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
@@ -29,6 +30,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models and video on application startup."""
+    # Log compute device
+    if torch.cuda.is_available():
+        logger.info(f"GPU detected: {torch.cuda.get_device_name(0)} (CUDA)")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        logger.info("GPU detected: Apple Metal (MPS)")
+    else:
+        logger.info("No GPU detected, using CPU")
+
     # Support both local dev and Docker paths
     video_path = os.environ.get("VIDEO_PATH", "../public/Under-Armour.mp4")
 
