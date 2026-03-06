@@ -42,10 +42,18 @@ async def lifespan(app: FastAPI):
             logger.warning("Failed to initialize YOLO-E v8l model, will use fallback")
         else:
             logger.info("YOLO-E v8l model loaded successfully")
+            # Warmup inference to trigger PyTorch JIT compilation
+            try:
+                dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+                dummy_pil = Image.fromarray(dummy)
+                yolo_e_model.predict(dummy_pil, conf=0.1, verbose=False)
+                logger.info("Warmup inference complete")
+            except Exception as warmup_err:
+                logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
     except Exception as e:
         logger.error(f"Error during YOLO-E v8l model loading: {e}")
         logger.warning("Will use fallback models for inference")
-    
+
     yield
     
     # Cleanup on shutdown
@@ -209,7 +217,7 @@ def load_yolo_e_model():
 
 def frame_to_base64(frame: np.ndarray) -> str:
     """Convert an OpenCV frame (numpy array) to a base64 encoded JPEG string."""
-    _, buffer = cv2.imencode('.jpg', frame)
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
     return base64.b64encode(buffer).decode('utf-8')
 
 
@@ -342,8 +350,19 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
             except Exception as e:
                 logger.warning(f"Could not set text prompts: {e}")
 
-        # Run YOLO-E inference - exactly like your reference code
-        results = yolo_e_model.predict(pil_image, conf=0.1, verbose=False)
+        # Resize for faster inference (YOLO resizes internally anyway)
+        INFER_SIZE = 640
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
+        if scale < 1.0:
+            infer_w, infer_h = int(orig_w * scale), int(orig_h * scale)
+            infer_image = pil_image.resize((infer_w, infer_h), Image.BILINEAR)
+        else:
+            scale = 1.0
+            infer_image = pil_image
+
+        # Run YOLO-E inference on resized image
+        results = yolo_e_model.predict(infer_image, conf=0.1, verbose=False)
 
         if not results or len(results) == 0:
             return {
@@ -366,8 +385,9 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
 
             for i, box in enumerate(boxes):
                 try:
-                    # Extract bounding box coordinates
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    # Extract bounding box coordinates and scale back to original frame
+                    bx1, by1, bx2, by2 = box.xyxy[0].tolist()
+                    x1, y1, x2, y2 = bx1 / scale, by1 / scale, bx2 / scale, by2 / scale
                     confidence = box.conf[0].item()
                     class_id = int(box.cls[0]) if hasattr(box, 'cls') and len(box.cls) > 0 else 0
 
@@ -388,24 +408,21 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                     else:
                         class_name = f"object_{i}"
 
-                    # Extract segmentation mask if available
+                    # Extract segmentation mask if available, scale to original frame
                     mask = None
                     if masks is not None and i < len(masks):
                         try:
                             if hasattr(masks, 'xy'):
-                                mask = masks.xy[i].tolist()
+                                mask = (np.array(masks.xy[i]) / scale).tolist()
                             elif hasattr(masks, 'data'):
-                                # Convert mask data to polygon format
                                 mask_data = masks.data[i].cpu().numpy()
-                                # Find contours in the mask
                                 contours, _ = cv2.findContours(
                                     mask_data.astype(np.uint8),
                                     cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                                 )
                                 if contours:
-                                    # Use the largest contour
                                     largest_contour = max(contours, key=cv2.contourArea)
-                                    mask = largest_contour.squeeze().tolist()
+                                    mask = (largest_contour.squeeze() / scale).tolist()
                         except Exception as e:
                             logger.warning(f"Could not extract mask for object {i}: {e}")
 
@@ -514,8 +531,19 @@ def run_yolo_e_v8l_inference(
         # Set classes with cached text embeddings
         _set_classes_cached(prompt_classes)
 
-        # Run YOLO-E inference - exactly like your reference code
-        results = yolo_e_model.predict(pil_image, conf=confidence, verbose=False)
+        # Resize for faster inference
+        INFER_SIZE = 640
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
+        if scale < 1.0:
+            infer_w, infer_h = int(orig_w * scale), int(orig_h * scale)
+            infer_image = pil_image.resize((infer_w, infer_h), Image.BILINEAR)
+        else:
+            scale = 1.0
+            infer_image = pil_image
+
+        # Run YOLO-E inference on resized image
+        results = yolo_e_model.predict(infer_image, conf=confidence, verbose=False)
 
         if not results or len(results) == 0:
             return {
