@@ -210,7 +210,7 @@ function App() {
             src={brand.logo}
             alt={brand.logoAlt}
             style={{
-              height: '112px',
+              height: brand.logoHeight,
               width: 'auto',
               objectFit: 'contain'
             }}

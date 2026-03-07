@@ -1,8 +1,8 @@
-# Retail Vision 🛍️
+# Retail Vision
 
 A cutting-edge computer vision application that enables users to click on objects in videos and purchase them immediately. Built with state-of-the-art object segmentation models and a modern web interface.
 
-## 🎯 Project Overview
+## Project Overview
 
 Retail Vision transforms passive video watching into an interactive shopping experience. Using advanced computer vision and machine learning techniques, the application:
 
@@ -11,7 +11,9 @@ Retail Vision transforms passive video watching into an interactive shopping exp
 - **Provides instant product recognition** using YOLO-E segmentation models
 - **Offers seamless integration** between video content and e-commerce
 
-## 🏗️ Architecture
+![Retail Vision App Screenshot](docs/app-screenshot.png)
+
+## Architecture
 
 The project consists of three main components:
 
@@ -31,7 +33,7 @@ The project consists of three main components:
 - **YOLO-E v8l-seg**: Efficient edge-optimized instance segmentation model
 - **MobileCLIP**: Text-to-image understanding for enhanced object recognition
 
-## 🚀 Features
+## Features
 
 - **Real-time Object Detection**: Instant recognition of products in video content
 - **Interactive Segmentation**: Clickable object boundaries with confidence scores
@@ -41,7 +43,7 @@ The project consists of three main components:
 - **Modern UI/UX**: Intuitive interface with Material Design principles
 - **Docker Support**: Easy deployment with containerization
 
-## 📋 Prerequisites
+## Prerequisites
 
 Before running this project, ensure you have:
 
@@ -51,7 +53,7 @@ Before running this project, ensure you have:
 - **Docker** (optional, for easy deployment)
 - **FFmpeg** for video processing (optional, for additional video formats)
 
-## 🛠️ Installation
+## Installation
 
 ### Option 1: Local Development Setup
 
@@ -108,14 +110,14 @@ import supervision as sv
 from ultralytics import YOLOE
 import torch
 from PIL import Image
-print('✅ All imports successful!')
+print('All imports successful!')
 "
 
 # Check model files
 ls -lh *.pt *.ts
 # Should show:
 # - yoloe-v8l-seg.pt (~107MB)
-# - mobileclip_blt.pt (~599MB)  
+# - mobileclip_blt.pt (~599MB)
 # - mobileclip_blt.ts (~380MB)
 ```
 
@@ -149,7 +151,7 @@ docker build -t retail-vision .
 docker run -p 8000:8000 retail-vision
 ```
 
-## 🚀 Running the Application
+## Running the Application
 
 ### Local Development
 
@@ -185,24 +187,24 @@ docker-compose up -d
 # API Docs: http://localhost/docs
 ```
 
-## 🌐 Access Points
+## Access Points
 
 Once running, the application is available at:
 
-- **Frontend Application**: 
+- **Frontend Application**:
   - Local: http://localhost:3000
   - Docker: http://localhost (port 80)
-- **Backend API**: 
+- **Backend API**:
   - Local: http://localhost:8000
   - Docker: http://localhost:8000
-- **Interactive API Documentation**: 
+- **Interactive API Documentation**:
   - Local: http://localhost:8000/docs
   - Docker: http://localhost/docs
-- **Health Check**: 
+- **Health Check**:
   - Local: http://localhost:8000/
   - Docker: http://localhost/health
 
-## 🔧 Configuration
+## Configuration
 
 ### Model Selection
 The application uses YOLO-E models for efficient edge-optimized inference:
@@ -246,7 +248,7 @@ The application uses YOLO-E v8l with the following features:
 - **Confidence Threshold**: 0.1 (configurable)
 - **MobileCLIP Integration**: Enables text-to-image understanding for enhanced object recognition
 
-## 📊 API Endpoints
+## API Endpoints
 
 ### Core Endpoints
 
@@ -281,7 +283,7 @@ curl -X POST "http://localhost:8000/api/inference" \
 }
 ```
 
-## 🛠️ Development Scripts
+## Development Scripts
 
 ### Frontend Scripts
 | Command | Description |
@@ -302,7 +304,7 @@ curl -X POST "http://localhost:8000/api/inference" \
 | `uvicorn main:app --reload` | Manual backend startup |
 | `python main.py` | Direct Python execution |
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 cv-coe-retail-vision/
@@ -335,7 +337,7 @@ cv-coe-retail-vision/
 ```
 
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -393,7 +395,7 @@ curl http://localhost:3000/  # Frontend
 - **Memory Management**: Monitor RAM usage with larger models
 - **Caching**: Implement result caching for repeated requests
 
-## 🔒 Security Considerations
+## Security Considerations
 
 - **Input Validation**: All API inputs are validated
 - **CORS Configuration**: Configured for development; restrict in production
@@ -401,7 +403,7 @@ curl http://localhost:3000/  # Frontend
 - **Rate Limiting**: Implement API rate limiting for production use
 - **Authentication**: Add authentication for production deployment
 
-## 🧪 Testing
+## Testing
 
 ### Backend Testing
 ```bash
@@ -426,7 +428,7 @@ curl -X POST "http://localhost:8000/api/inference" \
      -d '{"timestamp": 0}'
 ```
 
-## 🚧 Known Issues & Limitations
+## Known Issues & Limitations
 
 - **Model Loading**: Large models may take time to load initially
 - **Video Format Support**: Limited to common video formats (MP4, AVI)
@@ -434,7 +436,7 @@ curl -X POST "http://localhost:8000/api/inference" \
 - **Object Classes**: Currently focused on general object detection
 - **Memory Usage**: YOLO-E models require significant RAM
 
-## 📈 Performance Tips
+## Performance Tips
 
 - **Hardware**: Use GPU acceleration for faster inference
 - **Model Size**: Choose appropriate model size based on performance needs
@@ -442,7 +444,7 @@ curl -X POST "http://localhost:8000/api/inference" \
 - **Caching**: Add result caching for repeated timestamp requests
 - **Optimization**: Use model quantization for production deployment
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -456,11 +458,11 @@ curl -X POST "http://localhost:8000/api/inference" \
 - Update documentation for API changes
 - Ensure Docker builds work correctly
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Ultralytics**: For the YOLO models and ultralytics library
 - **THU-MIG**: For the YOLO-E implementation
@@ -469,7 +471,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Material-UI**: For the beautiful UI components
 - **Apple**: For the MobileCLIP model
 
-## 📞 Support
+## Support
 
 For questions, issues, or contributions:
 - Create an issue in the repository
@@ -479,6 +481,6 @@ For questions, issues, or contributions:
 
 ---
 
-**Retail Vision** - Transforming video watching into interactive shopping experiences! 🎥🛒
+**Retail Vision** - Transforming video watching into interactive shopping experiences.
 
-*Built with ❤️ using YOLO-E, FastAPI, React, and Docker*
+*Built with YOLO-E, FastAPI, React, and Docker*

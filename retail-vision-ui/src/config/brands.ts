@@ -5,6 +5,7 @@ export interface BrandConfig {
   name: string;
   logo: string;
   logoAlt: string;
+  logoHeight: string;
   videoUrl: string;
   videoPath: string; // backend video file path
   tagline: string;
@@ -16,7 +17,8 @@ const brands: Record<string, BrandConfig> = {
     name: 'Under Armour',
     logo: underArmourLogo,
     logoAlt: 'Under Armour',
-    videoUrl: '/Under-Armour.mp4',
+    logoHeight: '112px',
+    videoUrl: '/videos/Under-Armour.mp4',
     videoPath: '../public/Under-Armour.mp4',
     tagline: 'See it. Click it. Own it.',
     yoloeClasses: [
@@ -29,7 +31,8 @@ const brands: Record<string, BrandConfig> = {
     name: 'BLEND360',
     logo: blendLogo,
     logoAlt: 'BLEND360',
-    videoUrl: '/The BLEND360 Approach.mp4',
+    logoHeight: '56px',
+    videoUrl: '/videos/The BLEND360 Approach.mp4',
     videoPath: '../public/The BLEND360 Approach.mp4',
     tagline: 'AI-Powered Retail Intelligence',
     yoloeClasses: [

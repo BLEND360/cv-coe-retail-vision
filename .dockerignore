@@ -3,7 +3,6 @@ retail-vision-ui/node_modules
 retail-vision-ui/build
 retail-vision-ui/backend/venv
 retail-vision-ui/backend/__pycache__
-retail-vision-ui/backend/yoloe-*.pt
 retail-vision-ui/backend/mobileclip_blt.ts
 venv
 __pycache__

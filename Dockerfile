@@ -63,10 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Ensure python/pip are available (nvidia images use python3)
-RUN if ! command -v python &> /dev/null; then \
-        ln -s /usr/bin/python3 /usr/bin/python && \
-        ln -s /usr/bin/pip3 /usr/bin/pip; \
-    fi
+RUN command -v python > /dev/null 2>&1 || ln -sf /usr/bin/python3 /usr/bin/python; \
+    command -v pip > /dev/null 2>&1 || ln -sf /usr/bin/pip3 /usr/bin/pip
 
 # Set working directory
 WORKDIR /app
@@ -85,18 +83,20 @@ COPY retail-vision-ui/backend/ ./backend/
 # Copy built frontend from frontend-build stage
 COPY --from=frontend-build /app/frontend/build /var/www/html
 
-# Copy video file for the demo
-COPY retail-vision-ui/public/Under-Armour.mp4 ./public/Under-Armour.mp4
+# Copy video files for the demo
+COPY retail-vision-ui/public/*.mp4 ./public/
 
-# Copy model files (mobileclip for text embeddings)
+# Copy model files
 COPY retail-vision-ui/backend/mobileclip_blt.pt ./backend/mobileclip_blt.pt
+COPY retail-vision-ui/backend/yoloe-v8l-seg.pt ./backend/yoloe-v8l-seg.pt
 
 # Create necessary directories
 RUN mkdir -p backend/static/videos backend/models
 
 # Set environment variables for container deployment
-ENV VIDEO_PATH=/app/public/Under-Armour.mp4 \
-    FRONTEND_DIR=/var/www/html
+ARG BRAND=under-armour
+ENV FRONTEND_DIR=/var/www/html \
+    BRAND=${BRAND}
 
 # Set working directory to backend for model path resolution
 WORKDIR /app/backend
@@ -108,6 +108,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Start with multiple workers for better concurrency
-# Workers handle parallel requests while inference runs in thread pools
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Set VIDEO_PATH based on brand at runtime, then start server
+CMD if [ "$BRAND" = "blend360" ]; then \
+      export VIDEO_PATH="/app/public/The BLEND360 Approach.mp4"; \
+    else \
+      export VIDEO_PATH="/app/public/Under-Armour.mp4"; \
+    fi && \
+    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2

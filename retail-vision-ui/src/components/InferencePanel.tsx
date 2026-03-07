@@ -330,7 +330,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
               fontWeight: 600
             }}
           >
-            🎯 Object at Clicked Pixel
+            Object at Clicked Pixel
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Box>
@@ -493,7 +493,6 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
             }}
           >
             Last inference: {lastUpdate.toLocaleTimeString()} | Method: {inferenceType.toUpperCase()}
-            {inferenceData?.text_prompt_used && ` | Prompt: ${inferenceData.text_prompt_used}`}
           </Typography>
         </Box>
       )}

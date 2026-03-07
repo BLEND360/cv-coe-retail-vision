@@ -2,8 +2,9 @@ import asyncio
 import cv2
 import numpy as np
 from ultralytics import YOLOE
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -872,7 +873,70 @@ async def get_yolo_e_v8l_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Serve frontend as SPA with html=True (handles Range requests for video + client-side routing)
+# Serve video files with Range request support (enables seeking in browser)
+# Serve video files with Range request support (enables seeking in browser)
+VIDEO_DIR = os.environ.get("VIDEO_DIR", "../public")
+if not os.path.isdir(VIDEO_DIR):
+    VIDEO_DIR = "/app/public"
+
+
+@app.get("/videos/{video_name:path}")
+async def serve_video(video_name: str, request: Request):
+    video_file = os.path.join(VIDEO_DIR, video_name)
+    if not os.path.isfile(video_file):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    file_size = os.path.getsize(video_file)
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_spec = range_header.replace("bytes=", "")
+        parts = range_spec.split("-")
+        range_start = int(parts[0])
+        range_end = int(parts[1]) if parts[1] else file_size - 1
+        content_length = range_end - range_start + 1
+
+        def iter_file():
+            with open(video_file, "rb") as f:
+                f.seek(range_start)
+                remaining = content_length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            iter_file(),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Type": "video/mp4",
+            },
+        )
+
+    def iter_full_file():
+        with open(video_file, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        iter_full_file(),
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": "video/mp4",
+        },
+    )
+
+
+# Serve frontend as SPA with html=True (client-side routing)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend-spa")
 
