@@ -8,7 +8,7 @@
 
 set -e
 
-BRAND="${1:-under-armour}"
+BRAND="${1:-blend360}"
 
 # Map brand to video file
 case "$BRAND" in

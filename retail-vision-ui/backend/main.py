@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         logger.info("No GPU detected, using CPU")
 
     # Support both local dev and Docker paths
-    video_path = os.environ.get("VIDEO_PATH", "../public/Under-Armour.mp4")
+    video_path = os.environ.get("VIDEO_PATH", "../public/The BLEND360 Approach.mp4")
 
     if not load_video(video_path):
         logger.error("Failed to load video on startup.")

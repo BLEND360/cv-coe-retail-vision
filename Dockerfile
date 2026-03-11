@@ -28,7 +28,7 @@ COPY retail-vision-ui/tsconfig.json ./
 
 # Build the application
 # BRAND arg selects logo, video, and tagline (default: under-armour)
-ARG BRAND=under-armour
+ARG BRAND=blend360
 ENV REACT_APP_API_URL="" \
     REACT_APP_BRAND=${BRAND}
 RUN npm run build
@@ -91,10 +91,10 @@ COPY retail-vision-ui/backend/mobileclip_blt.pt ./backend/mobileclip_blt.pt
 COPY retail-vision-ui/backend/yoloe-v8l-seg.pt ./backend/yoloe-v8l-seg.pt
 
 # Create necessary directories
-RUN mkdir -p backend/static/videos backend/models
+RUN mkdir -p backend/models
 
 # Set environment variables for container deployment
-ARG BRAND=under-armour
+ARG BRAND=blend360
 ENV FRONTEND_DIR=/var/www/html \
     BRAND=${BRAND}
 
