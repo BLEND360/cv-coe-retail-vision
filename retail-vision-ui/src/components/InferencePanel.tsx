@@ -13,6 +13,7 @@ import {
   Paper
 } from '@mui/material';
 import { Psychology, Mouse } from '@mui/icons-material';
+import { brand } from '../config/brands';
 
 interface Detection {
   id: number;
@@ -49,7 +50,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
   const [showAnnotated, setShowAnnotated] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [inferenceType] = useState<InferenceType>('yolo-e');
-  const [textPrompt] = useState<string>('laptop, headphones, glasses, blazer, desk, watch, monitor, trash can, chair, shirt, running pants, running shoes, jacket, gloves');
+  const [textPrompt] = useState<string>(brand.yoloeClasses.join(', '));
   const addedDetectionsRef = useRef<Set<string>>(new Set());
   const lastInferenceTimestampRef = useRef<number>(0);
 
@@ -78,7 +79,8 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
         requestBody.text_prompt = textPrompt;
       }
 
-      const response = await fetch(`http://localhost:8000${endpoint}`, {
+      const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBase}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -328,7 +330,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
               fontWeight: 600
             }}
           >
-            🎯 Object at Clicked Pixel
+            Object at Clicked Pixel
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Box>
@@ -491,7 +493,6 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
             }}
           >
             Last inference: {lastUpdate.toLocaleTimeString()} | Method: {inferenceType.toUpperCase()}
-            {inferenceData?.text_prompt_used && ` | Prompt: ${inferenceData.text_prompt_used}`}
           </Typography>
         </Box>
       )}

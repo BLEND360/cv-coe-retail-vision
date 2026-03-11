@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { brand } from '../config/brands';
 import { 
   Box, 
   Typography, 
@@ -29,7 +30,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ onTimeUpdate, onVideoClick })
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
 
-  const videoUrl = "/Under-Armour.mp4";
+  const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  const videoUrl = `${apiBase}${brand.videoUrl}`;
 
   useEffect(() => {
     const video = videoRef.current;

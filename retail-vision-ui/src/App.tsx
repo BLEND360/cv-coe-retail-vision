@@ -4,7 +4,7 @@ import { CssBaseline, Box, Paper, Typography, Switch, FormControlLabel } from '@
 import VideoPlayer from './components/VideoPlayer';
 import InferencePanel from './components/InferencePanel';
 import ShoppingCart from './components/ShoppingCart';
-import underArmourLogo from './assets/under-armour-logo.png';
+import { brand } from './config/brands';
 import './App.css';
 
 interface CartItem {
@@ -206,14 +206,14 @@ function App() {
           display: 'flex',
           alignItems: 'center'
         }}>
-          <img 
-            src={underArmourLogo} 
-            alt="Under Armour" 
-            style={{ 
-              height: '112px',
+          <img
+            src={brand.logo}
+            alt={brand.logoAlt}
+            style={{
+              height: brand.logoHeight,
               width: 'auto',
               objectFit: 'contain'
-            }} 
+            }}
           />
         </Box>
 
@@ -246,7 +246,7 @@ function App() {
               letterSpacing: '-0.01em'
             }}
           >
-            See it. Click it. Own it.
+            {brand.tagline}
           </Typography>
           <Typography 
             variant="body1" 

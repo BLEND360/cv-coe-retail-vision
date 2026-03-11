@@ -1,162 +1,139 @@
-# Retail Vision 🛍️
+# Retail Vision
 
-A cutting-edge computer vision application that enables users to click on objects in videos and purchase them immediately. Built with state-of-the-art object segmentation models and a modern web interface.
+A computer vision application that enables users to click on objects in videos and purchase them. Built with YOLO-E segmentation models and a modern web interface.
 
-## 🎯 Project Overview
+## Project Overview
 
-Retail Vision transforms passive video watching into an interactive shopping experience. Using advanced computer vision and machine learning techniques, the application:
+Retail Vision transforms passive video watching into an interactive shopping experience. Using advanced computer vision and machine learning, the application:
 
-- **Detects and segments objects** in real-time video streams
+- **Detects and segments objects** in video frames using YOLO-E models
 - **Enables click-to-purchase** functionality for identified products
-- **Provides instant product recognition** using YOLO-E segmentation models
-- **Offers seamless integration** between video content and e-commerce
+- **Provides instant product recognition** using YOLO-E with MobileCLIP text prompts
+- **Supports multiple brands** with configurable video, logo, and tagline per brand
 
-## 🏗️ Architecture
+![Retail Vision App Screenshot](docs/app-screenshot.png)
 
-The project consists of three main components:
+## Architecture
 
-### 1. **Backend API** (FastAPI + Python)
-- **Object Detection & Segmentation**: Powered by YOLO-E (You Only Look Once Edge) models
-- **Video Processing**: Real-time frame analysis and object tracking
-- **RESTful API**: FastAPI endpoints for segmentation data
-- **Model Management**: Support for multiple YOLO-E model variants
+The project consists of two main services:
 
-### 2. **Frontend UI** (React + TypeScript)
-- **Video Player**: Interactive video interface with clickable objects
-- **Segmentation Visualization**: Real-time display of detected objects
-- **Shopping Integration**: Seamless product selection and purchase flow
-- **Responsive Design**: Modern Material-UI components
+### 1. Backend API (FastAPI + Python)
+- **Object Detection & Segmentation**: Powered by YOLO-E v8l with MobileCLIP text encoding
+- **Video Processing**: Frame extraction at specific timestamps with Range request support for seeking
+- **RESTful API**: FastAPI endpoints for inference, prompt management, and video serving
+- **Text Embedding Caching**: Avoids rebuilding MobileCLIP on every request
 
-### 3. **Computer Vision Models**
-- **YOLO-E v8l-seg**: Efficient edge-optimized instance segmentation model
-- **MobileCLIP**: Text-to-image understanding for enhanced object recognition
+### 2. Frontend UI (React + TypeScript)
+- **Interactive Video Player**: Click anywhere on the video to trigger object detection
+- **Inference Panel**: Displays detection results with toggle between original and annotated frames
+- **Shopping Cart**: Product selection with size/color selectors and quantity controls
+- **Multi-Brand Support**: Configurable branding via `REACT_APP_BRAND` environment variable
+- **Material-UI**: Responsive design with Material Design components
 
-## 🚀 Features
+### Computer Vision Models
+- **YOLO-E v8l-seg** (~107MB): Instance segmentation model, auto-downloaded if missing
+- **MobileCLIP** (`mobileclip_blt.pt` ~599MB, `mobileclip_blt.ts` ~380MB): Text-to-image understanding for custom object class detection
 
-- **Real-time Object Detection**: Instant recognition of products in video content
-- **Interactive Segmentation**: Clickable object boundaries with confidence scores
-- **Multi-model Support**: Choose between speed and accuracy based on use case
-- **Video Timeline Integration**: Navigate to specific timestamps for object analysis
-- **Cross-platform Compatibility**: Works on desktop and mobile devices
-- **Modern UI/UX**: Intuitive interface with Material Design principles
-- **Docker Support**: Easy deployment with containerization
-
-## 📋 Prerequisites
-
-Before running this project, ensure you have:
+## Prerequisites
 
 - **Python 3.11+** with pip
 - **Node.js 18+** with npm
 - **Git** for version control
-- **Docker** (optional, for easy deployment)
-- **FFmpeg** for video processing (optional, for additional video formats)
+- **Docker** (optional, for containerized deployment)
 
-## 🛠️ Installation
+## Installation
 
-### Option 1: Local Development Setup
+### Option 1: Automated Setup (Recommended)
 
-#### 1. Clone the Repository
 ```bash
 git clone <your-repository-url>
 cd cv-coe-retail-vision
+./setup.sh
 ```
 
-#### 2. Backend Setup
+This script creates the backend virtual environment, installs all dependencies, downloads the MobileCLIP model if missing, installs frontend packages, and verifies required files.
 
-##### Automated Installation (Recommended)
+### Option 2: Manual Setup
+
+#### Backend
 ```bash
 cd retail-vision-ui/backend
 
-# Run the installation script
-./install_dependencies.sh
+# Create and activate virtual environment
+python3.11 -m venv venv
+source venv/bin/activate  # macOS/Linux
+# venv\Scripts\activate   # Windows
 
-# Or use Python version
-python install_yoloe_dependencies.py
-```
-
-##### Manual Installation
-```bash
-cd retail-vision-ui/backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-venv\Scripts\activate
-
-# Install core dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# Install YOLO-E specific dependencies
+# Download MobileCLIP model (if not present)
+curl -L -o mobileclip_blt.pt \
+    "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt"
+```
+
+YOLO-E dependencies are installed from GitHub (see `requirements.txt` for the `git+` URLs):
+```bash
 pip install "git+https://github.com/THU-MIG/yoloe.git#subdirectory=third_party/CLIP"
 pip install "git+https://github.com/THU-MIG/yoloe.git#subdirectory=third_party/ml-mobileclip"
 pip install "git+https://github.com/THU-MIG/yoloe.git#subdirectory=third_party/lvis-api"
 pip install "git+https://github.com/THU-MIG/yoloe.git"
-
-# Download MobileCLIP model (if not present)
-curl -L -o mobileclip_blt.pt https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt
 ```
 
-##### Verification Steps
+#### Verify Backend Setup
 ```bash
-# Test imports
 python -c "
 import supervision as sv
 from ultralytics import YOLOE
 import torch
 from PIL import Image
-print('✅ All imports successful!')
+print('All imports successful!')
 "
 
 # Check model files
 ls -lh *.pt *.ts
-# Should show:
-# - yoloe-v8l-seg.pt (~107MB)
-# - mobileclip_blt.pt (~599MB)  
+# Expected:
+# - yoloe-v8l-seg.pt (~107MB) - auto-downloaded on first startup if missing
+# - mobileclip_blt.pt (~599MB)
 # - mobileclip_blt.ts (~380MB)
 ```
 
-#### 3. Frontend Setup
+#### Frontend
 ```bash
 cd retail-vision-ui
-
-# Install dependencies
 npm install
 ```
 
-### Option 2: Docker Deployment
+### Option 3: Docker
 
-#### Quick Start
 ```bash
-# Build and run everything
-docker-compose up -d
-
-# Access the app
-# Frontend: http://localhost:3000
-# Backend: http://localhost:8000
-
-# Stop everything
-docker-compose down
-```
-
-#### Backend Only
-```bash
-# Build and run backend
+# CPU build (default)
 docker build -t retail-vision .
-docker run -p 8000:8000 retail-vision
+
+# GPU build (NVIDIA CUDA)
+docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
+
+# Brand-specific build
+docker build --build-arg BRAND=blend360 -t retail-vision-blend .
 ```
 
-## 🚀 Running the Application
+## Running the Application
 
 ### Local Development
 
-#### 1. Start the Backend Server
+#### Quick Launch (Both Services)
+```bash
+./quick_launch.sh                  # Under Armour (default)
+./quick_launch.sh under-armour     # Under Armour
+./quick_launch.sh blend360         # BLEND360
+```
+
+#### Manual Start
+
+**Terminal 1 - Backend:**
 ```bash
 cd retail-vision-ui/backend
-source venv/bin/activate  # or activate on Windows
+source venv/bin/activate
 
 # Option 1: Using the runner script
 python run_backend.py
@@ -165,192 +142,201 @@ python run_backend.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The backend will be available at `http://localhost:8000`
-
-#### 2. Start the Frontend Development Server
+**Terminal 2 - Frontend:**
 ```bash
 cd retail-vision-ui
-npm run dev
+npm start
 ```
 
-The frontend will be available at `http://localhost:3000`
+### Docker
 
-### Docker Deployment
 ```bash
-# Start everything
-docker-compose up -d
+# CPU
+docker run -p 8000:8000 retail-vision
 
-# Access: Frontend http://localhost:3000, Backend http://localhost:8000
-# Stop: docker-compose down
-# API Docs: http://localhost/docs
+# GPU
+docker run --gpus all -p 8000:8000 retail-vision-gpu
 ```
 
-## 🌐 Access Points
+The Docker container serves both the frontend and backend on port 8000.
 
-Once running, the application is available at:
+### Access Points
 
-- **Frontend Application**: 
-  - Local: http://localhost:3000
-  - Docker: http://localhost (port 80)
-- **Backend API**: 
-  - Local: http://localhost:8000
-  - Docker: http://localhost:8000
-- **Interactive API Documentation**: 
-  - Local: http://localhost:8000/docs
-  - Docker: http://localhost/docs
-- **Health Check**: 
-  - Local: http://localhost:8000/
-  - Docker: http://localhost/health
+| Service | Local | Docker |
+|---------|-------|--------|
+| Frontend | http://localhost:3000 | http://localhost:8000 |
+| Backend API | http://localhost:8000 | http://localhost:8000 |
+| API Docs (Swagger) | http://localhost:8000/docs | http://localhost:8000/docs |
 
-## 🔧 Configuration
+## API Endpoints
 
-### Model Selection
-The application uses YOLO-E models for efficient edge-optimized inference:
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/video-status` | Video load status, frame count, FPS, duration |
+| `POST` | `/api/inference/yolo-e` | Click-based inference (primary endpoint) |
+| `POST` | `/api/inference/yolo-e-v8l` | Direct YOLO-E v8l inference with text prompt |
+| `POST` | `/api/yolo-e/update-prompt` | Update detection classes via text prompt |
+| `GET` | `/api/yolo-e/current-prompt` | Get current detection classes |
+| `GET` | `/api/yolo-e-v8l/status` | YOLO-E v8l model status and available classes |
+| `GET` | `/videos/{video_name}` | Serve video files with Range request support |
 
-1. **Primary Model**:
-   - `yoloe-v8l-seg.pt` (~107MB): Efficient edge-optimized segmentation model
-   - Located in: `retail-vision-ui/backend/yoloe-v8l-seg.pt`
-   - Automatically downloaded on first startup if missing
+### Click-Based Inference
 
-2. **Supporting Models**:
-   - `mobileclip_blt.pt` (~599MB): MobileCLIP PyTorch model for text encoding
-   - `mobileclip_blt.ts` (~380MB): MobileCLIP TorchScript model for text processing
-   - Both required for text prompt functionality
-
-### Video Configuration
-Update the video path in `retail-vision-ui/backend/main.py`:
-```python
-video_path = "../public/Under-Armour.mp4"
-```
-
-### Environment Variables
-Create `.env` files for configuration:
-
-**Backend (.env)**:
 ```bash
-VIDEO_PATH=/path/to/video.mp4
-MODEL_PATH=/path/to/model.pt
-ENVIRONMENT=development
-PYTHONUNBUFFERED=1
-```
-
-**Frontend (.env.local)**:
-```bash
-REACT_APP_API_URL=http://localhost:8000
-```
-
-### YOLO-E Model Details
-The application uses YOLO-E v8l with the following features:
-- **Text Prompts**: Supports custom object classes via text descriptions
-- **Default Classes**: `["laptop", "headphones", "glasses", "blazer", "desk", "watch", "monitor", "trash can", "chair", "shirt", "running pants", "running shoes", "jacket", "gloves"]`
-- **Confidence Threshold**: 0.1 (configurable)
-- **MobileCLIP Integration**: Enables text-to-image understanding for enhanced object recognition
-
-## 📊 API Endpoints
-
-### Core Endpoints
-
-- **`GET /`** - Health check
-- **`GET /api/status`** - Video and model status
-- **`POST /api/inference`** - Get inference for specific video time
-- **`GET /api/inference/latest`** - Get latest inference result
-
-### Example API Usage
-
-**Get inference for timestamp:**
-```bash
-curl -X POST "http://localhost:8000/api/inference" \
+curl -X POST "http://localhost:8000/api/inference/yolo-e" \
      -H "Content-Type: application/json" \
-     -d '{"timestamp": 10.5}'
+     -d '{
+       "video_time": 10.5,
+       "x": 500,
+       "y": 300,
+       "frame_width": 1920,
+       "frame_height": 1080,
+       "text_prompt": "shirt, jacket, shoes"
+     }'
 ```
 
 **Response:**
 ```json
 {
-  "timestamp": 10.5,
+  "timestamp": 1700000000.0,
+  "video_time": 10.5,
+  "clicked_pixel": {"x": 500, "y": 300},
   "detections": [
     {
-      "class_id": 73,
-      "class_name": "laptop",
+      "id": 0,
+      "class": 0,
+      "class_name": "shirt",
       "confidence": 0.95,
       "bbox": [100, 150, 200, 300],
-      "mask": "base64_encoded_mask"
+      "mask": [[...]]
     }
   ],
-  "frame_base64": "base64_encoded_frame"
+  "frame_base64": "...",
+  "annotated_frame_base64": "...",
+  "clicked_object": { ... },
+  "inference_type": "YOLO-E",
+  "text_prompt_used": "shirt, jacket, shoes"
 }
 ```
 
-## 🛠️ Development Scripts
+### Text Prompt Inference
 
-### Frontend Scripts
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start development server |
-| `npm start` | Start development server (alias) |
-| `npm run build` | Build production bundle |
-| `npm run test` | Run test suite |
-| `npm run lint` | Check code quality with ESLint |
-| `npm run type-check` | Run TypeScript type checking |
-| `npm run clean` | Remove build artifacts |
-| `npm run preview` | Build and serve production build locally |
+```bash
+curl -X POST "http://localhost:8000/api/inference/yolo-e-v8l" \
+     -H "Content-Type: application/json" \
+     -d '{"text_prompt": "laptop, headphones, glasses", "confidence": 0.1}'
+```
 
-### Backend Scripts
-| Command | Description |
-|---------|-------------|
-| `python run_backend.py` | Start backend with auto-reload |
-| `uvicorn main:app --reload` | Manual backend startup |
-| `python main.py` | Direct Python execution |
+## Multi-Brand Configuration
 
-## 📁 Project Structure
+The application supports multiple brand configurations via `retail-vision-ui/src/config/brands.ts`:
+
+| Brand | Env Value | Video | Tagline |
+|-------|-----------|-------|---------|
+| Under Armour | `under-armour` (default) | `Under-Armour.mp4` | See it. Click it. Own it. |
+| BLEND360 | `blend360` | `The BLEND360 Approach.mp4` | AI-Powered Retail Intelligence |
+
+Each brand configures its own logo, video file, tagline, and YOLOE detection classes.
+
+**Set brand via environment variable:**
+```bash
+# Frontend
+REACT_APP_BRAND=blend360 npm start
+
+# Docker build
+docker build --build-arg BRAND=blend360 -t retail-vision-blend .
+
+# Quick launch
+./quick_launch.sh blend360
+```
+
+## Configuration
+
+### Default Detection Classes
+
+Defined in `retail-vision-ui/backend/main.py` (`YOLOE_CLASSES`):
+```
+laptop, headphones, glasses, blazer, desk, watch, monitor, trash can,
+chair, shirt, running pants, running shoes, jacket, gloves
+```
+
+These can be overridden per-request via the `text_prompt` parameter or updated globally via `POST /api/yolo-e/update-prompt`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VIDEO_PATH` | `../public/Under-Armour.mp4` | Backend video file path |
+| `REACT_APP_API_URL` | `http://localhost:8000` | Frontend API base URL |
+| `REACT_APP_BRAND` | `under-armour` | Frontend brand selection |
+| `FRONTEND_DIR` | `/var/www/html` | Docker frontend static files directory |
+| `BRAND` | `under-armour` | Docker brand selection |
+
+## Project Structure
 
 ```
 cv-coe-retail-vision/
 ├── retail-vision-ui/           # Main application directory
 │   ├── backend/                # FastAPI backend
-│   │   ├── main.py            # Main API server
-│   │   ├── run_backend.py     # Backend startup script
-│   │   ├── requirements.txt   # Python dependencies
-│   │   ├── static/            # Static files (videos, models)
-│   │   │   └── videos/        # Video files
-│   │   └── venv/              # Python virtual environment
-│   ├── src/                   # React frontend source code
-│   │   ├── components/        # React components
-│   │   │   ├── VideoPlayer.tsx
-│   │   │   ├── InferencePanel.tsx
-│   │   │   └── ShoppingCart.tsx
-│   │   ├── App.tsx            # Main application component
-│   │   └── index.tsx          # Application entry point
-│   ├── public/                # Static files
-│   ├── package.json           # Node.js dependencies and scripts
-│   └── tsconfig.json          # TypeScript configuration
-├── models/                     # YOLO model files
-├── docker-compose.yml          # Docker Compose configuration
-├── Dockerfile                  # Single container Dockerfile
-├── nginx.conf                  # Nginx configuration
-├── supervisord.conf            # Process management configuration
-├── requirements.txt            # Root Python dependencies
-├── install_dependencies.sh     # Dependency installation script
-└── venv/                      # Root Python virtual environment
+│   │   ├── main.py             # API server (all endpoints)
+│   │   ├── run_backend.py      # Backend startup script
+│   │   ├── requirements.txt    # Python dependencies
+│   │   ├── yoloe-v8l-seg.pt    # YOLO-E model (~107MB, gitignored)
+│   │   ├── mobileclip_blt.pt   # MobileCLIP model (~599MB, gitignored)
+│   │   ├── mobileclip_blt.ts   # MobileCLIP TorchScript (~380MB, gitignored)
+│   │   └── venv/               # Python 3.11 virtual environment
+│   ├── src/                    # React frontend source
+│   │   ├── App.tsx             # Main app component (cart, theme, layout)
+│   │   ├── index.tsx           # Application entry point
+│   │   ├── components/
+│   │   │   ├── VideoPlayer.tsx     # Interactive video with click detection
+│   │   │   ├── InferencePanel.tsx  # Detection results display
+│   │   │   └── ShoppingCart.tsx    # Cart with size/color selectors
+│   │   ├── config/
+│   │   │   └── brands.ts          # Multi-brand configuration
+│   │   └── assets/
+│   │       ├── under-armour-logo.png
+│   │       └── blend-logo.png
+│   ├── public/                 # Static files
+│   │   ├── Under-Armour.mp4    # Default brand video
+│   │   └── The BLEND360 Approach.mp4
+│   ├── package.json            # Node.js dependencies and scripts
+│   └── tsconfig.json           # TypeScript configuration
+├── docs/                       # Documentation
+│   └── app-screenshot.png
+├── Dockerfile                  # Multi-stage build (frontend + backend)
+├── .dockerignore
+├── quick_launch.sh             # Launch both services locally
+├── setup.sh                    # Automated setup script
+└── venv/                       # Root Python virtual environment
 ```
 
+## Available Scripts
 
-## 🐛 Troubleshooting
+### Frontend (`retail-vision-ui/`)
+| Command | Description |
+|---------|-------------|
+| `npm start` | Start development server (port 3000) |
+| `npm run build` | Build production bundle |
+| `npm test` | Run test suite |
 
-### Common Issues
+### Backend (`retail-vision-ui/backend/`)
+| Command | Description |
+|---------|-------------|
+| `python run_backend.py` | Start backend with auto-reload (port 8000) |
+| `uvicorn main:app --reload --host 0.0.0.0 --port 8000` | Manual startup |
 
-#### 1. Port Conflicts
+## Troubleshooting
+
+### Port Conflicts
 ```bash
 # Kill processes on ports 3000 and 8000
 lsof -ti:3000 | xargs kill -9
 lsof -ti:8000 | xargs kill -9
-
-# Or use different ports
-npm run dev -- --port 3001
-uvicorn main:app --port 8001
 ```
 
-#### 2. Python Dependencies Issues
+### Python Dependencies Issues
 ```bash
 cd retail-vision-ui/backend
 source venv/bin/activate
@@ -358,127 +344,27 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### 3. Node Modules Issues
+### Node Modules Issues
 ```bash
 cd retail-vision-ui
 rm -rf node_modules package-lock.json
 npm install
 ```
 
-#### 4. Docker Issues
+### Model Loading Issues
+- Ensure model files exist in `retail-vision-ui/backend/` (`.pt` and `.ts` files)
+- `yoloe-v8l-seg.pt` is auto-downloaded on first startup if missing
+- `mobileclip_blt.pt` must be downloaded manually or via `setup.sh`
+- Check file permissions and available disk space
+- Monitor RAM usage -- YOLO-E models require significant memory
+
+### Health Check
 ```bash
-# Clean up and rebuild
-docker-compose down -v
-docker-compose up --build
+curl http://localhost:8000/api/health
 ```
-
-#### 5. Model Loading Issues
-- Ensure YOLO model files exist in the backend directory
-- Check file permissions
-- Verify CUDA installation if using GPU
-- Use smaller models for limited resources
-
-
-### Health Checks
-```bash
-# Check if services are running
-curl http://localhost:8000/  # Backend
-curl http://localhost:3000/  # Frontend
-```
-
-### Performance Optimization
-
-- **GPU Acceleration**: Install CUDA for faster inference
-- **Model Selection**: Use smaller models for real-time performance
-- **Memory Management**: Monitor RAM usage with larger models
-- **Caching**: Implement result caching for repeated requests
-
-## 🔒 Security Considerations
-
-- **Input Validation**: All API inputs are validated
-- **CORS Configuration**: Configured for development; restrict in production
-- **Model Security**: Use trusted YOLO models from official sources
-- **Rate Limiting**: Implement API rate limiting for production use
-- **Authentication**: Add authentication for production deployment
-
-## 🧪 Testing
-
-### Backend Testing
-```bash
-cd retail-vision-ui/backend
-python -m pytest  # If pytest is configured
-```
-
-### Frontend Testing
-```bash
-cd retail-vision-ui
-npm test
-```
-
-### API Testing
-```bash
-# Test health endpoint
-curl http://localhost:8000/
-
-# Test inference endpoint
-curl -X POST "http://localhost:8000/api/inference" \
-     -H "Content-Type: application/json" \
-     -d '{"timestamp": 0}'
-```
-
-## 🚧 Known Issues & Limitations
-
-- **Model Loading**: Large models may take time to load initially
-- **Video Format Support**: Limited to common video formats (MP4, AVI)
-- **Real-time Processing**: Processing speed depends on hardware capabilities
-- **Object Classes**: Currently focused on general object detection
-- **Memory Usage**: YOLO-E models require significant RAM
-
-## 📈 Performance Tips
-
-- **Hardware**: Use GPU acceleration for faster inference
-- **Model Size**: Choose appropriate model size based on performance needs
-- **Batch Processing**: Implement batch inference for multiple frames
-- **Caching**: Add result caching for repeated timestamp requests
-- **Optimization**: Use model quantization for production deployment
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-- Follow existing code style and patterns
-- Add tests for new features
-- Update documentation for API changes
-- Ensure Docker builds work correctly
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Ultralytics**: For the YOLO models and ultralytics library
-- **THU-MIG**: For the YOLO-E implementation
-- **FastAPI**: For the modern, fast web framework
-- **React**: For the frontend framework
-- **Material-UI**: For the beautiful UI components
-- **Apple**: For the MobileCLIP model
-
-## 📞 Support
-
-For questions, issues, or contributions:
-- Create an issue in the repository
-- Contact the development team
-- Check the documentation for common solutions
-- Review the troubleshooting section above
 
 ---
 
-**Retail Vision** - Transforming video watching into interactive shopping experiences! 🎥🛒
+**Retail Vision** - Transforming video watching into interactive shopping experiences.
 
-*Built with ❤️ using YOLO-E, FastAPI, React, and Docker*
+*Built with YOLO-E, FastAPI, React, and Docker*

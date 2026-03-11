@@ -1,8 +1,11 @@
+import asyncio
 import cv2
 import numpy as np
 from ultralytics import YOLOE
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
@@ -13,6 +16,7 @@ from PIL import Image
 import os
 import urllib.request
 import supervision as sv
+import torch
 
 # Single source of truth for YOLOE classes
 YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
@@ -27,7 +31,16 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models and video on application startup."""
-    video_path = "../public/Under-Armour.mp4"
+    # Log compute device
+    if torch.cuda.is_available():
+        logger.info(f"GPU detected: {torch.cuda.get_device_name(0)} (CUDA)")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        logger.info("GPU detected: Apple Metal (MPS)")
+    else:
+        logger.info("No GPU detected, using CPU")
+
+    # Support both local dev and Docker paths
+    video_path = os.environ.get("VIDEO_PATH", "../public/The BLEND360 Approach.mp4")
 
     if not load_video(video_path):
         logger.error("Failed to load video on startup.")
@@ -39,10 +52,18 @@ async def lifespan(app: FastAPI):
             logger.warning("Failed to initialize YOLO-E v8l model, will use fallback")
         else:
             logger.info("YOLO-E v8l model loaded successfully")
+            # Warmup inference to trigger PyTorch JIT compilation
+            try:
+                dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+                dummy_pil = Image.fromarray(dummy)
+                yolo_e_model.predict(dummy_pil, conf=0.1, verbose=False)
+                logger.info("Warmup inference complete")
+            except Exception as warmup_err:
+                logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
     except Exception as e:
         logger.error(f"Error during YOLO-E v8l model loading: {e}")
         logger.warning("Will use fallback models for inference")
-    
+
     yield
     
     # Cleanup on shutdown
@@ -57,15 +78,26 @@ app = FastAPI(lifespan=lifespan)
 # CORS middleware to allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Serve frontend static files if available (Docker deployment)
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/var/www/html")
+if os.path.isdir(FRONTEND_DIR):
+    # Mount /static for JS/CSS bundles
+    static_dir = os.path.join(FRONTEND_DIR, "static")
+    if os.path.isdir(static_dir):
+        app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
+
 # Global variables for model and video capture
 video_cap = None
 yolo_e_model = None
+# Cache for text embeddings to avoid rebuilding mobileclip on every request
+_cached_text_pe = None
+_cached_prompt_key = None
 
 
 class ClickInferenceRequest(BaseModel):
@@ -179,27 +211,9 @@ def load_yolo_e_model():
         try:
             yolo_e_model = YOLOE(model_path)
 
-            # Set default classes to limited retail items
-            try:
-                # Try to get text embeddings safely
-                try:
-                    text_pe = yolo_e_model.get_text_pe(YOLOE_CLASSES)
-                    yolo_e_model.set_classes(YOLOE_CLASSES, text_pe)
-                    logger.info(f"YOLO-E v8l model loaded with limited classes: "
-                               f"{YOLOE_CLASSES}")
-                except Exception as pe_error:
-                    logger.warning(f"Could not get text embeddings: {pe_error}")
-                    # Fallback: try setting classes without text embeddings
-                    try:
-                        yolo_e_model.set_classes(YOLOE_CLASSES)
-                        logger.info(f"YOLO-E v8l model loaded with limited classes (fallback): "
-                                   f"{YOLOE_CLASSES}")
-                    except Exception as fallback_error:
-                        logger.warning(f"Could not set default classes: {fallback_error}")
-                        logger.info("YOLO-E v8l model loaded successfully")
-            except Exception as class_error:
-                logger.warning(f"Could not set default classes: {class_error}")
-                logger.info("YOLO-E v8l model loaded successfully")
+            # Set default classes to limited retail items (also caches embeddings)
+            _set_classes_cached(YOLOE_CLASSES)
+            logger.info(f"YOLO-E v8l model loaded with limited classes: {YOLOE_CLASSES}")
 
             return True
         except Exception as load_error:
@@ -213,7 +227,7 @@ def load_yolo_e_model():
 
 def frame_to_base64(frame: np.ndarray) -> str:
     """Convert an OpenCV frame (numpy array) to a base64 encoded JPEG string."""
-    _, buffer = cv2.imencode('.jpg', frame)
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
     return base64.b64encode(buffer).decode('utf-8')
 
 
@@ -303,6 +317,26 @@ def find_object_at_pixel(
     return None
 
 
+def _set_classes_cached(prompt_classes: List[str]):
+    """Set model classes with cached text embeddings to avoid rebuilding mobileclip."""
+    global _cached_text_pe, _cached_prompt_key
+    prompt_key = tuple(prompt_classes)
+    if _cached_prompt_key == prompt_key and _cached_text_pe is not None:
+        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
+        return
+    try:
+        _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
+        _cached_prompt_key = prompt_key
+        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
+        logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
+    except Exception as pe_error:
+        logger.warning(f"Could not get text embeddings: {pe_error}")
+        try:
+            yolo_e_model.set_classes(prompt_classes)
+        except Exception as fallback_error:
+            logger.warning(f"Could not set text prompts at all: {fallback_error}")
+
+
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                         text_prompt: str = None) -> Dict[str, Any]:
     """Run YOLO-E inference - simple and direct like your reference code"""
@@ -320,26 +354,25 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                 prompt_classes = [cls.strip() for cls in text_prompt.split(',')
                                 if cls.strip()]
                 if prompt_classes:
-                    # Try to get text embeddings safely
-                    try:
-                        text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                        yolo_e_model.set_classes(prompt_classes, text_pe)
-                        logger.info(f"YOLO-E text prompts set: {prompt_classes}")
-                    except Exception as pe_error:
-                        logger.warning(f"Could not get text embeddings: {pe_error}")
-                        # Fallback: try setting classes without text embeddings
-                        try:
-                            yolo_e_model.set_classes(prompt_classes)
-                            logger.info(f"YOLO-E text prompts set (fallback): {prompt_classes}")
-                        except Exception as fallback_error:
-                            logger.warning(f"Could not set text prompts at all: {fallback_error}")
+                    _set_classes_cached(prompt_classes)
                 else:
                     logger.warning("No valid classes found in text prompt")
             except Exception as e:
                 logger.warning(f"Could not set text prompts: {e}")
 
-        # Run YOLO-E inference - exactly like your reference code
-        results = yolo_e_model.predict(pil_image, conf=0.1, verbose=False)
+        # Resize for faster inference (YOLO resizes internally anyway)
+        INFER_SIZE = 640
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
+        if scale < 1.0:
+            infer_w, infer_h = int(orig_w * scale), int(orig_h * scale)
+            infer_image = pil_image.resize((infer_w, infer_h), Image.BILINEAR)
+        else:
+            scale = 1.0
+            infer_image = pil_image
+
+        # Run YOLO-E inference on resized image
+        results = yolo_e_model.predict(infer_image, conf=0.1, verbose=False)
 
         if not results or len(results) == 0:
             return {
@@ -362,8 +395,9 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
 
             for i, box in enumerate(boxes):
                 try:
-                    # Extract bounding box coordinates
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    # Extract bounding box coordinates and scale back to original frame
+                    bx1, by1, bx2, by2 = box.xyxy[0].tolist()
+                    x1, y1, x2, y2 = bx1 / scale, by1 / scale, bx2 / scale, by2 / scale
                     confidence = box.conf[0].item()
                     class_id = int(box.cls[0]) if hasattr(box, 'cls') and len(box.cls) > 0 else 0
 
@@ -384,24 +418,21 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                     else:
                         class_name = f"object_{i}"
 
-                    # Extract segmentation mask if available
+                    # Extract segmentation mask if available, scale to original frame
                     mask = None
                     if masks is not None and i < len(masks):
                         try:
                             if hasattr(masks, 'xy'):
-                                mask = masks.xy[i].tolist()
+                                mask = (np.array(masks.xy[i]) / scale).tolist()
                             elif hasattr(masks, 'data'):
-                                # Convert mask data to polygon format
                                 mask_data = masks.data[i].cpu().numpy()
-                                # Find contours in the mask
                                 contours, _ = cv2.findContours(
                                     mask_data.astype(np.uint8),
                                     cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                                 )
                                 if contours:
-                                    # Use the largest contour
                                     largest_contour = max(contours, key=cv2.contourArea)
-                                    mask = largest_contour.squeeze().tolist()
+                                    mask = (largest_contour.squeeze() / scale).tolist()
                         except Exception as e:
                             logger.warning(f"Could not extract mask for object {i}: {e}")
 
@@ -507,26 +538,22 @@ def run_yolo_e_v8l_inference(
         if not prompt_classes:
             return {"error": "No valid classes found in text prompt"}
 
-        # Set classes and text prompts using the clean approach from reference code
-        try:
-            # Try to get text embeddings safely
-            try:
-                text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                yolo_e_model.set_classes(prompt_classes, text_pe)
-                logger.info(f"YOLO-E v8l text prompts set: {prompt_classes}")
-            except Exception as pe_error:
-                logger.warning(f"Could not get text embeddings: {pe_error}")
-                # Fallback: try setting classes without text embeddings
-                try:
-                    yolo_e_model.set_classes(prompt_classes)
-                    logger.info(f"YOLO-E v8l text prompts set (fallback): {prompt_classes}")
-                except Exception as fallback_error:
-                    logger.warning(f"Could not set text prompts, using default: {fallback_error}")
-        except Exception as e:
-            logger.warning(f"Could not set text prompts, using default: {e}")
+        # Set classes with cached text embeddings
+        _set_classes_cached(prompt_classes)
 
-        # Run YOLO-E inference - exactly like your reference code
-        results = yolo_e_model.predict(pil_image, conf=confidence, verbose=False)
+        # Resize for faster inference
+        INFER_SIZE = 640
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
+        if scale < 1.0:
+            infer_w, infer_h = int(orig_w * scale), int(orig_h * scale)
+            infer_image = pil_image.resize((infer_w, infer_h), Image.BILINEAR)
+        else:
+            scale = 1.0
+            infer_image = pil_image
+
+        # Run YOLO-E inference on resized image
+        results = yolo_e_model.predict(infer_image, conf=confidence, verbose=False)
 
         if not results or len(results) == 0:
             return {
@@ -598,8 +625,8 @@ def run_yolo_e_v8l_inference(
 
 
 
-@app.get("/")
-async def read_root():
+@app.get("/api/health")
+async def health_check():
     return {"message": "Retail Vision Backend API"}
 
 
@@ -637,9 +664,9 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
         logger.info(f"Requested frame dimensions: "
                    f"{request.frame_width}x{request.frame_height}")
 
-        # Run YOLO-E inference - simple and direct like your reference code
-        inference_result = run_yolo_e_inference(
-            frame, request.x, request.y, request.text_prompt
+        # Run YOLO-E inference in thread pool to avoid blocking the event loop
+        inference_result = await asyncio.to_thread(
+            run_yolo_e_inference, frame, request.x, request.y, request.text_prompt
         )
 
         if "error" in inference_result:
@@ -696,24 +723,10 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
                 status_code=400, detail="No valid classes found in text prompt"
             )
 
-        # Update the model's text prompts using the correct YOLOE pattern
+        # Update the model's text prompts (invalidates cache for new prompt)
         try:
-            # Try to get text embeddings safely
-            try:
-                text_pe = yolo_e_model.get_text_pe(prompt_classes)
-                yolo_e_model.set_classes(prompt_classes, text_pe)
-                logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
-            except Exception as pe_error:
-                logger.warning(f"Could not get text embeddings: {pe_error}")
-                # Fallback: try setting classes without text embeddings
-                try:
-                    yolo_e_model.set_classes(prompt_classes)
-                    logger.info(f"YOLO-E text prompts updated (fallback): {prompt_classes}")
-                except Exception as fallback_error:
-                    logger.warning(f"Could not update text prompts: {fallback_error}")
-                    raise HTTPException(
-                        status_code=500, detail=f"Could not update text prompts: {fallback_error}"
-                    )
+            _set_classes_cached(prompt_classes)
+            logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
         except Exception as e:
             logger.error(f"Failed to update YOLO-E text prompts: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -781,9 +794,9 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
             cv2.putText(frame, "No video loaded", (50, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Run YOLO-E v8l inference
-        inference_result = run_yolo_e_v8l_inference(
-            frame, request.text_prompt, request.confidence
+        # Run YOLO-E v8l inference in thread pool to avoid blocking the event loop
+        inference_result = await asyncio.to_thread(
+            run_yolo_e_v8l_inference, frame, request.text_prompt, request.confidence
         )
 
         if "error" in inference_result:
@@ -858,6 +871,74 @@ async def get_yolo_e_v8l_status():
     except Exception as e:
         logger.error(f"Failed to get YOLO-E v8l status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Serve video files with Range request support (enables seeking in browser)
+# Serve video files with Range request support (enables seeking in browser)
+VIDEO_DIR = os.environ.get("VIDEO_DIR", "../public")
+if not os.path.isdir(VIDEO_DIR):
+    VIDEO_DIR = "/app/public"
+
+
+@app.get("/videos/{video_name:path}")
+async def serve_video(video_name: str, request: Request):
+    video_file = os.path.join(VIDEO_DIR, video_name)
+    if not os.path.isfile(video_file):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    file_size = os.path.getsize(video_file)
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_spec = range_header.replace("bytes=", "")
+        parts = range_spec.split("-")
+        range_start = int(parts[0])
+        range_end = int(parts[1]) if parts[1] else file_size - 1
+        content_length = range_end - range_start + 1
+
+        def iter_file():
+            with open(video_file, "rb") as f:
+                f.seek(range_start)
+                remaining = content_length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            iter_file(),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Type": "video/mp4",
+            },
+        )
+
+    def iter_full_file():
+        with open(video_file, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        iter_full_file(),
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": "video/mp4",
+        },
+    )
+
+
+# Serve frontend as SPA with html=True (client-side routing)
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend-spa")
 
 
 if __name__ == "__main__":
