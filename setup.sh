@@ -37,7 +37,7 @@ source venv/bin/activate
 pip install --quiet -r requirements.txt
 echo "  Backend dependencies installed"
 
-# Download mobileclip model if not present
+# Download models if not present
 if [ ! -f "mobileclip_blt.pt" ]; then
     echo "  Downloading mobileclip_blt.pt (571MB)..."
     curl -L -o mobileclip_blt.pt \
@@ -45,6 +45,15 @@ if [ ! -f "mobileclip_blt.pt" ]; then
     echo "  mobileclip_blt.pt downloaded"
 else
     echo "  mobileclip_blt.pt already exists"
+fi
+
+if [ ! -f "yoloe-v8l-seg.pt" ]; then
+    echo "  Downloading yoloe-v8l-seg.pt (107MB)..."
+    curl -L -o yoloe-v8l-seg.pt \
+        "https://github.com/ultralytics/assets/releases/download/v8.3.0/yoloe-v8l-seg.pt"
+    echo "  yoloe-v8l-seg.pt downloaded"
+else
+    echo "  yoloe-v8l-seg.pt already exists"
 fi
 
 cd ../..
@@ -68,6 +77,12 @@ if [ -f "retail-vision-ui/backend/mobileclip_blt.pt" ]; then
     echo "  MobileCLIP model: OK"
 else
     echo "  WARNING: mobileclip_blt.pt not found (text prompts will not work)"
+fi
+
+if [ -f "retail-vision-ui/backend/yoloe-v8l-seg.pt" ]; then
+    echo "  YOLO-E v8l model: OK"
+else
+    echo "  WARNING: yoloe-v8l-seg.pt not found (will auto-download on first run)"
 fi
 
 echo ""

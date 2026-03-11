@@ -86,9 +86,11 @@ COPY --from=frontend-build /app/frontend/build /var/www/html
 # Copy video files for the demo
 COPY retail-vision-ui/public/*.mp4 ./public/
 
-# Copy model files
-COPY retail-vision-ui/backend/mobileclip_blt.pt ./backend/mobileclip_blt.pt
-COPY retail-vision-ui/backend/yoloe-v8l-seg.pt ./backend/yoloe-v8l-seg.pt
+# Download model files (gitignored, so they must be fetched during build)
+RUN curl -L -o backend/yoloe-v8l-seg.pt \
+        "https://github.com/ultralytics/assets/releases/download/v8.3.0/yoloe-v8l-seg.pt" && \
+    curl -L -o backend/mobileclip_blt.pt \
+        "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt"
 
 # Create necessary directories
 RUN mkdir -p backend/models
