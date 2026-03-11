@@ -309,7 +309,6 @@ cv-coe-retail-vision/
 ├── .dockerignore
 ├── quick_launch.sh             # Launch both services locally
 ├── setup.sh                    # Automated setup script
-├── run_backend.py              # Root backend runner
 └── venv/                       # Root Python virtual environment
 ```
 
