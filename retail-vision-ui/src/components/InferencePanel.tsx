@@ -79,7 +79,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
         requestBody.text_prompt = textPrompt;
       }
 
-      const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const apiBase = process.env.REACT_APP_API_URL ?? 'http://localhost:8000';
       const response = await fetch(`${apiBase}${endpoint}`, {
         method: 'POST',
         headers: {
