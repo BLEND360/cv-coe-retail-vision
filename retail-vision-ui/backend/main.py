@@ -330,11 +330,8 @@ def _set_classes_cached(prompt_classes: List[str]):
         yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
         logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
     except Exception as pe_error:
-        logger.warning(f"Could not get text embeddings: {pe_error}")
-        try:
-            yolo_e_model.set_classes(prompt_classes)
-        except Exception as fallback_error:
-            logger.warning(f"Could not set text prompts at all: {fallback_error}")
+        logger.warning(f"Could not get text embeddings: {pe_error} -- using COCO classes")
+        return
 
 
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
