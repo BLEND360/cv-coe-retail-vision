@@ -87,10 +87,16 @@ COPY --from=frontend-build /app/frontend/build /var/www/html
 COPY retail-vision-ui/public/*.mp4 ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
-RUN curl -L -o backend/yoloe-v8l-seg.pt \
+# --fail makes curl return exit code 22 on HTTP errors (e.g. 404, 403)
+# so the build fails fast instead of saving an error page as the model file.
+RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
         "https://github.com/ultralytics/assets/releases/download/v8.3.0/yoloe-v8l-seg.pt" && \
-    curl -L -o backend/mobileclip_blt.pt \
-        "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt"
+    curl --fail -L -o backend/mobileclip_blt.pt \
+        "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt" && \
+    echo "Model file sizes:" && \
+    ls -lh backend/yoloe-v8l-seg.pt backend/mobileclip_blt.pt && \
+    test $(stat -c%s backend/yoloe-v8l-seg.pt 2>/dev/null || stat -f%z backend/yoloe-v8l-seg.pt) -gt 50000000 && \
+    test $(stat -c%s backend/mobileclip_blt.pt 2>/dev/null || stat -f%z backend/mobileclip_blt.pt) -gt 50000000
 
 # Create necessary directories
 RUN mkdir -p backend/models
