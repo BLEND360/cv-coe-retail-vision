@@ -17,6 +17,7 @@ import os
 import urllib.request
 import supervision as sv
 import torch
+import torch.nn.functional as F
 
 # Single source of truth for YOLOE classes
 YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
@@ -26,6 +27,58 @@ YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- MobileCLIP text embedding fix (issue #4) ---
+# YOLOE's get_text_pe() can trigger a TorchScript code path where the
+# positional embedding reshape fails (39424 elements vs [1, seq_len, 512]).
+# We bypass this by loading MobileCLIP directly via the Python mobileclip
+# package, which handles positional embedding slicing correctly.
+_mobileclip_model = None
+_mobileclip_tokenizer = None
+
+
+def _load_mobileclip():
+    """Load MobileCLIP model and tokenizer using the Python package directly."""
+    global _mobileclip_model, _mobileclip_tokenizer
+    if _mobileclip_model is not None:
+        return True
+    try:
+        import mobileclip
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _mobileclip_model, _, _ = mobileclip.create_model_and_transforms(
+            "mobileclip_b", pretrained="mobileclip_blt.pt", device=device
+        )
+        _mobileclip_tokenizer = mobileclip.get_tokenizer("mobileclip_b")
+        logger.info("MobileCLIP loaded directly via Python package")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to load MobileCLIP directly: {e}")
+        return False
+
+
+@torch.inference_mode()
+def _get_text_pe_direct(texts: List[str]):
+    """Generate text positional embeddings using our directly-loaded MobileCLIP.
+
+    Replicates the logic of YOLOEModel.get_text_pe() but uses the Python
+    mobileclip package so we never hit the TorchScript positional embedding bug.
+    """
+    if not _load_mobileclip():
+        return None
+
+    tokens = _mobileclip_tokenizer(texts).to(
+        next(_mobileclip_model.parameters()).device
+    )
+    txt_feats = _mobileclip_model.encode_text(tokens)
+    txt_feats = txt_feats / txt_feats.norm(p=2, dim=-1, keepdim=True)
+    txt_feats = txt_feats.reshape(1, len(texts), txt_feats.shape[-1])
+
+    # Pass through the YOLOE detection head's reprta layer (same as get_tpe)
+    from ultralytics.nn.modules.head import YOLOEDetect
+    head = yolo_e_model.model.model[-1]
+    assert isinstance(head, YOLOEDetect)
+    return F.normalize(head.reprta(txt_feats), dim=-1, p=2)
+# --- End MobileCLIP fix ---
 
 
 @asynccontextmanager
@@ -325,7 +378,11 @@ def _set_classes_cached(prompt_classes: List[str]):
         yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
         return
     try:
-        _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
+        # Use our direct MobileCLIP loading (bypasses TorchScript pos_embed bug)
+        _cached_text_pe = _get_text_pe_direct(prompt_classes)
+        if _cached_text_pe is None:
+            # Fallback to YOLOE's built-in path
+            _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
         _cached_prompt_key = prompt_key
         yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
         logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
