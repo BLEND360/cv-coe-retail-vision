@@ -1,0 +1,353 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Retail Vision ECS deployment with ALB on GPU (g4dn.xlarge)
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC ID
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for ALB (AZ 1)
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for ALB (AZ 2)
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for ECS instances (AZ 1, must have NAT)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for ECS instances (AZ 2, must have NAT)
+
+  InstanceType:
+    Type: String
+    Default: g4dn.xlarge
+    Description: EC2 instance type for ECS (must support NVIDIA GPU)
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Docker image tag to deploy
+
+Resources:
+  # --- ECR Repository ---
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: cv-coe-retail-vision
+      ImageScanningConfiguration:
+        ScanOnPush: false
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  # --- Security Groups ---
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP inbound to ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: retail-vision-alb-sg
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from ALB to ECS instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: retail-vision-ecs-sg
+
+  # --- IAM Roles ---
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-task-execution"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ec2"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # --- CloudWatch Logs ---
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}"
+      RetentionInDays: 7
+
+  # --- ALB ---
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-alb"
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AWS::StackName}-tg"
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      # Model loading takes time on GPU instances
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  # --- ECS Cluster ---
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-cluster"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+
+  # --- EC2 Launch Template (GPU with ECS-optimized AMI) ---
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-lt"
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        # ECS-optimized Amazon Linux 2 GPU AMI — resolves to latest automatically
+        ImageId: !Sub "resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id"
+        SecurityGroupIds:
+          - !Ref ECSSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            echo "ECS_CLUSTER=${ECSCluster}" >> /etc/ecs/ecs.config
+            echo "ECS_ENABLE_GPU_SUPPORT=true" >> /etc/ecs/ecs.config
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 50
+              VolumeType: gp3
+
+  # --- Auto Scaling Group ---
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ecs-instance"
+          PropagateAtLaunch: true
+
+  # --- ECS Capacity Provider ---
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "${AWS::StackName}-cp"
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+          Status: DISABLED
+        ManagedTerminationProtection: DISABLED
+
+  ClusterCapacityProviderAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref ECSCluster
+      CapacityProviders:
+        - !Ref CapacityProvider
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref CapacityProvider
+          Weight: 1
+
+  # --- ECS Task Definition ---
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - EC2
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      Cpu: "4096"
+      Memory: "15360"
+      ContainerDefinitions:
+        - Name: retail-vision
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:${ImageTag}"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          ResourceRequirements:
+            - Type: GPU
+              Value: "1"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8000/api/health || exit 1
+            Interval: 30
+            Timeout: 10
+            Retries: 5
+            StartPeriod: 120
+
+  # --- ECS Service ---
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ALBListener
+    Properties:
+      ServiceName: retail-vision
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: EC2
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+      LoadBalancers:
+        - ContainerName: retail-vision
+          ContainerPort: 8000
+          TargetGroupArn: !Ref ALBTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+
+Outputs:
+  ALBURL:
+    Description: Application URL
+    Value: !Sub "http://${ALB.DNSName}"
+
+  ECRRepositoryURI:
+    Description: ECR repository URI (push your image here)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
+
+  ECSClusterName:
+    Description: ECS cluster name
+    Value: !Ref ECSCluster
+
+  LogGroupName:
+    Description: CloudWatch log group for container logs
+    Value: !Ref LogGroup
+
+  DeployCommands:
+    Description: Commands to push image and deploy
+    Value: !Sub |
+      # Login to ECR
+      aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+
+      # Build GPU image
+      docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
+
+      # Tag and push
+      docker tag retail-vision-gpu ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest
+      docker push ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest
+
+      # Force new deployment
+      aws ecs update-service --cluster ${ECSCluster} --service retail-vision --force-new-deployment
