@@ -7,7 +7,7 @@ ultralytics
 python-multipart
 
 # YOLO-E specific dependencies
-supervision
+supervision==0.26.1
 jupyter_bbox_widget
 
 # PyTorch ecosystem (for YOLO-E and MobileCLIP)

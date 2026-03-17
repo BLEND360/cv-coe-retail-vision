@@ -10,8 +10,18 @@
 
 ARG BASE_IMAGE=python:3.11-slim
 
+# Stage 0: Download YOLOE source (runs on native arch, no QEMU)
+FROM --platform=$BUILDPLATFORM alpine:3.19 AS yoloe-src
+RUN apk add --no-cache curl
+ARG YOLOE_COMMIT=40cd606cabdbe2b566d6f14a6b162c89206e9a1b
+RUN curl --fail -L -o /tmp/yoloe.tar.gz \
+        "https://github.com/THU-MIG/yoloe/archive/${YOLOE_COMMIT}.tar.gz" && \
+    mkdir /tmp/yoloe && \
+    tar xz -C /tmp/yoloe --strip-components=1 -f /tmp/yoloe.tar.gz && \
+    rm /tmp/yoloe.tar.gz
+
 # Stage 1: Build React frontend
-FROM node:18-alpine AS frontend-build
+FROM --platform=$BUILDPLATFORM node:18-alpine AS frontend-build
 
 WORKDIR /app/frontend
 
@@ -72,7 +82,18 @@ WORKDIR /app
 # Copy Python requirements and install dependencies
 # For GPU images, PyTorch with CUDA is installed via requirements
 COPY retail-vision-ui/backend/requirements.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Copy YOLOE source from native download stage (avoids QEMU network issues)
+COPY --from=yoloe-src /tmp/yoloe /tmp/yoloe
+RUN pip install --no-cache-dir \
+        /tmp/yoloe/third_party/CLIP \
+        /tmp/yoloe/third_party/ml-mobileclip \
+        /tmp/yoloe/third_party/lvis-api \
+        /tmp/yoloe && \
+    rm -rf /tmp/yoloe
+
+# Install remaining (non-git) requirements
+RUN grep -v 'git+' backend/requirements.txt | pip install --no-cache-dir -r /dev/stdin
 
 # Stage 3: Production image
 FROM backend-base AS production
@@ -87,10 +108,16 @@ COPY --from=frontend-build /app/frontend/build /var/www/html
 COPY retail-vision-ui/public/*.mp4 ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
-RUN curl -L -o backend/yoloe-v8l-seg.pt \
+# --fail makes curl return exit code 22 on HTTP errors (e.g. 404, 403)
+# so the build fails fast instead of saving an error page as the model file.
+RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
         "https://github.com/ultralytics/assets/releases/download/v8.3.0/yoloe-v8l-seg.pt" && \
-    curl -L -o backend/mobileclip_blt.pt \
-        "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt"
+    curl --fail -L -o backend/mobileclip_blt.pt \
+        "https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_blt.pt" && \
+    echo "Model file sizes:" && \
+    ls -lh backend/yoloe-v8l-seg.pt backend/mobileclip_blt.pt && \
+    test $(stat -c%s backend/yoloe-v8l-seg.pt 2>/dev/null || stat -f%z backend/yoloe-v8l-seg.pt) -gt 50000000 && \
+    test $(stat -c%s backend/mobileclip_blt.pt 2>/dev/null || stat -f%z backend/mobileclip_blt.pt) -gt 50000000
 
 # Create necessary directories
 RUN mkdir -p backend/models
