@@ -6,21 +6,13 @@ Parameters:
     Type: AWS::EC2::VPC::Id
     Description: Existing VPC ID
 
-  PublicSubnet1:
+  Subnet1:
     Type: AWS::EC2::Subnet::Id
-    Description: Public subnet for ALB (AZ 1)
+    Description: Subnet (AZ 1) - used for both ALB and ECS
 
-  PublicSubnet2:
+  Subnet2:
     Type: AWS::EC2::Subnet::Id
-    Description: Public subnet for ALB (AZ 2)
-
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet::Id
-    Description: Private subnet for ECS instances (AZ 1, must have NAT)
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet::Id
-    Description: Private subnet for ECS instances (AZ 2, must have NAT)
+    Description: Subnet (AZ 2) - used for both ALB and ECS
 
   InstanceType:
     Type: String
@@ -149,8 +141,8 @@ Resources:
       Scheme: internet-facing
       Type: application
       Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
+        - !Ref Subnet1
+        - !Ref Subnet2
       SecurityGroups:
         - !Ref ALBSecurityGroup
 
@@ -229,8 +221,8 @@ Resources:
       MaxSize: 1
       DesiredCapacity: 1
       VPCZoneIdentifier:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
+        - !Ref Subnet1
+        - !Ref Subnet2
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-ecs-instance"
@@ -307,8 +299,8 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets:
-            - !Ref PrivateSubnet1
-            - !Ref PrivateSubnet2
+            - !Ref Subnet1
+            - !Ref Subnet2
           SecurityGroups:
             - !Ref ECSSecurityGroup
       LoadBalancers:
