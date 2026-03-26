@@ -36,8 +36,7 @@ COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
 # Build the application
-ENV REACT_APP_API_URL="" \
-    REACT_APP_BRAND=blend360
+ENV REACT_APP_API_URL=""
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
