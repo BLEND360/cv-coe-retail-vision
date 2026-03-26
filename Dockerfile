@@ -3,7 +3,6 @@
 #
 # CPU build (default):   docker build -t retail-vision .
 # GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
-# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
 #
 # CPU run:               docker run -p 8000:8000 retail-vision
 # GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
@@ -37,10 +36,8 @@ COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
 # Build the application
-# BRAND arg selects logo, video, and tagline (default: under-armour)
-ARG BRAND=blend360
 ENV REACT_APP_API_URL="" \
-    REACT_APP_BRAND=${BRAND}
+    REACT_APP_BRAND=blend360
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
@@ -105,7 +102,7 @@ COPY retail-vision-ui/backend/ ./backend/
 COPY --from=frontend-build /app/frontend/build /var/www/html
 
 # Copy video files for the demo
-COPY retail-vision-ui/public/*.mp4 ./public/
+COPY "retail-vision-ui/public/The BLEND360 Approach.mp4" ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
 # --fail makes curl return exit code 22 on HTTP errors (e.g. 404, 403)
@@ -123,9 +120,8 @@ RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
 RUN mkdir -p backend/models
 
 # Set environment variables for container deployment
-ARG BRAND=blend360
 ENV FRONTEND_DIR=/var/www/html \
-    BRAND=${BRAND}
+    VIDEO_PATH="/app/public/The BLEND360 Approach.mp4"
 
 # Set working directory to backend for model path resolution
 WORKDIR /app/backend
@@ -137,10 +133,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Set VIDEO_PATH based on brand at runtime, then start server
-CMD if [ "$BRAND" = "blend360" ]; then \
-      export VIDEO_PATH="/app/public/The BLEND360 Approach.mp4"; \
-    else \
-      export VIDEO_PATH="/app/public/Under-Armour.mp4"; \
-    fi && \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+CMD uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2

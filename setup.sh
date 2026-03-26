@@ -67,10 +67,10 @@ cd ..
 
 echo ""
 echo "3/4 Verifying files..."
-if [ -f "retail-vision-ui/public/Under-Armour.mp4" ]; then
+if [ -f "retail-vision-ui/public/The BLEND360 Approach.mp4" ]; then
     echo "  Video file: OK"
 else
-    echo "  WARNING: retail-vision-ui/public/Under-Armour.mp4 not found"
+    echo "  WARNING: retail-vision-ui/public/The BLEND360 Approach.mp4 not found"
 fi
 
 if [ -f "retail-vision-ui/backend/mobileclip_blt.pt" ]; then

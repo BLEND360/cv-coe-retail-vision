@@ -1,4 +1,3 @@
-import underArmourLogo from '../assets/under-armour-logo.png';
 import blendLogo from '../assets/blend-logo.png';
 
 export interface BrandConfig {
@@ -7,42 +6,24 @@ export interface BrandConfig {
   logoAlt: string;
   logoHeight: string;
   videoUrl: string;
-  videoPath: string; // backend video file path
+  videoPath: string;
   tagline: string;
   yoloeClasses: string[];
 }
 
-const brands: Record<string, BrandConfig> = {
-  'under-armour': {
-    name: 'Under Armour',
-    logo: underArmourLogo,
-    logoAlt: 'Under Armour',
-    logoHeight: '112px',
-    videoUrl: '/videos/Under-Armour.mp4',
-    videoPath: '../public/Under-Armour.mp4',
-    tagline: 'See it. Click it. Own it.',
-    yoloeClasses: [
-      'laptop', 'headphones', 'glasses', 'blazer', 'desk', 'watch',
-      'monitor', 'trash can', 'chair', 'shirt', 'running pants',
-      'running shoes', 'jacket', 'gloves',
-    ],
-  },
-  blend360: {
-    name: 'BLEND360',
-    logo: blendLogo,
-    logoAlt: 'BLEND360',
-    logoHeight: '56px',
-    videoUrl: '/videos/The BLEND360 Approach.mp4',
-    videoPath: '../public/The BLEND360 Approach.mp4',
-    tagline: 'AI-Powered Retail Intelligence',
-    yoloeClasses: [
-      'laptop', 'headphones', 'glasses', 'blazer', 'desk', 'watch',
-      'monitor', 'trash can', 'chair', 'shirt', 'running pants',
-      'running shoes', 'jacket', 'gloves',
-    ],
-  },
+export const brand: BrandConfig = {
+  name: 'BLEND360',
+  logo: blendLogo,
+  logoAlt: 'BLEND360',
+  logoHeight: '56px',
+  videoUrl: '/videos/The BLEND360 Approach.mp4',
+  videoPath: '../public/The BLEND360 Approach.mp4',
+  tagline: 'AI-Powered Retail Intelligence',
+  yoloeClasses: [
+    'laptop', 'headphones', 'glasses', 'blazer', 'desk', 'watch',
+    'monitor', 'trash can', 'chair', 'shirt', 'running pants',
+    'running shoes', 'jacket', 'gloves',
+  ],
 };
 
-const brandKey = process.env.REACT_APP_BRAND || 'blend360';
-export const brand: BrandConfig = brands[brandKey] || brands['under-armour'];
-export default brands;
+export default brand;

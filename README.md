@@ -9,7 +9,7 @@ Retail Vision transforms passive video watching into an interactive shopping exp
 - **Detects and segments objects** in video frames using YOLO-E models
 - **Enables click-to-purchase** functionality for identified products
 - **Provides instant product recognition** using YOLO-E with MobileCLIP text prompts
-- **Supports multiple brands** with configurable video, logo, and tagline per brand
+- **BLEND360 branded** with custom video, logo, and tagline
 
 ![Retail Vision App Screenshot](docs/app-screenshot.png)
 
@@ -27,7 +27,6 @@ The project consists of two main services:
 - **Interactive Video Player**: Click anywhere on the video to trigger object detection
 - **Inference Panel**: Displays detection results with toggle between original and annotated frames
 - **Shopping Cart**: Product selection with size/color selectors and quantity controls
-- **Multi-Brand Support**: Configurable branding via `REACT_APP_BRAND` environment variable
 - **Material-UI**: Responsive design with Material Design components
 
 ### Computer Vision Models
@@ -113,8 +112,6 @@ docker build -t retail-vision .
 # GPU build (NVIDIA CUDA)
 docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
 
-# Brand-specific build
-docker build --build-arg BRAND=blend360 -t retail-vision-blend .
 ```
 
 ## Running the Application
@@ -123,9 +120,7 @@ docker build --build-arg BRAND=blend360 -t retail-vision-blend .
 
 #### Quick Launch (Both Services)
 ```bash
-./quick_launch.sh                  # Under Armour (default)
-./quick_launch.sh under-armour     # Under Armour
-./quick_launch.sh blend360         # BLEND360
+./quick_launch.sh
 ```
 
 #### Manual Start
@@ -228,29 +223,6 @@ curl -X POST "http://localhost:8000/api/inference/yolo-e-v8l" \
      -d '{"text_prompt": "laptop, headphones, glasses", "confidence": 0.1}'
 ```
 
-## Multi-Brand Configuration
-
-The application supports multiple brand configurations via `retail-vision-ui/src/config/brands.ts`:
-
-| Brand | Env Value | Video | Tagline |
-|-------|-----------|-------|---------|
-| Under Armour | `under-armour` (default) | `Under-Armour.mp4` | See it. Click it. Own it. |
-| BLEND360 | `blend360` | `The BLEND360 Approach.mp4` | AI-Powered Retail Intelligence |
-
-Each brand configures its own logo, video file, tagline, and YOLOE detection classes.
-
-**Set brand via environment variable:**
-```bash
-# Frontend
-REACT_APP_BRAND=blend360 npm start
-
-# Docker build
-docker build --build-arg BRAND=blend360 -t retail-vision-blend .
-
-# Quick launch
-./quick_launch.sh blend360
-```
-
 ## Configuration
 
 ### Default Detection Classes
@@ -267,11 +239,9 @@ These can be overridden per-request via the `text_prompt` parameter or updated g
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIDEO_PATH` | `../public/Under-Armour.mp4` | Backend video file path |
+| `VIDEO_PATH` | `../public/The BLEND360 Approach.mp4` | Backend video file path |
 | `REACT_APP_API_URL` | `http://localhost:8000` | Frontend API base URL |
-| `REACT_APP_BRAND` | `under-armour` | Frontend brand selection |
 | `FRONTEND_DIR` | `/var/www/html` | Docker frontend static files directory |
-| `BRAND` | `under-armour` | Docker brand selection |
 
 ## Project Structure
 
@@ -294,12 +264,10 @@ cv-coe-retail-vision/
 │   │   │   ├── InferencePanel.tsx  # Detection results display
 │   │   │   └── ShoppingCart.tsx    # Cart with size/color selectors
 │   │   ├── config/
-│   │   │   └── brands.ts          # Multi-brand configuration
+│   │   │   └── brands.ts          # Brand configuration
 │   │   └── assets/
-│   │       ├── under-armour-logo.png
 │   │       └── blend-logo.png
 │   ├── public/                 # Static files
-│   │   ├── Under-Armour.mp4    # Default brand video
 │   │   └── The BLEND360 Approach.mp4
 │   ├── package.json            # Node.js dependencies and scripts
 │   └── tsconfig.json           # TypeScript configuration
