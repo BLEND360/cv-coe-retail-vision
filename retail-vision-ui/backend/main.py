@@ -19,10 +19,28 @@ import supervision as sv
 import torch
 import torch.nn.functional as F
 
-# Single source of truth for YOLOE classes
-YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
-                 "monitor", "trash can", "chair", "shirt", "running pants",
-                 "running shoes", "jacket", "gloves"]
+# Per-brand YOLOE class lists. The startup list must match what the frontend
+# sends as text_prompt at click time — YOLOE cannot switch class counts
+# post-init without tripping an internal tensor-reshape error.
+RETAIL_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
+                  "monitor", "trash can", "chair", "shirt", "running pants",
+                  "running shoes", "jacket", "gloves"]
+HOSPITALITY_CLASSES = ["pool", "bar", "coffee shop", "lounge chair",
+                       "umbrella", "restaurant"]
+BRAND_CLASSES_MAP = {
+    "under-armour": RETAIL_CLASSES,
+    "blend360":     RETAIL_CLASSES,
+    "hyatt":        HOSPITALITY_CLASSES,
+}
+
+
+def get_startup_classes():
+    brand_key = os.environ.get("BRAND", "").lower()
+    return BRAND_CLASSES_MAP.get(brand_key, RETAIL_CLASSES)
+
+
+# Backwards-compatible alias for any code that still references YOLOE_CLASSES
+YOLOE_CLASSES = RETAIL_CLASSES
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -275,9 +293,9 @@ def load_yolo_e_model():
         try:
             yolo_e_model = YOLOE(model_path)
 
-            # Set default classes to limited retail items (also caches embeddings)
-            _set_classes_cached(YOLOE_CLASSES)
-            logger.info(f"YOLO-E v8l model loaded with limited classes: {YOLOE_CLASSES}")
+            startup_classes = get_startup_classes()
+            _set_classes_cached(startup_classes)
+            logger.info(f"YOLO-E v8l model loaded with brand classes: {startup_classes}")
 
             return True
         except Exception as load_error:
