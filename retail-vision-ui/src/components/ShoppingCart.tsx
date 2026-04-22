@@ -114,7 +114,7 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
             fontWeight: 600
           }}
         >
-          Shopping Cart
+          Cart
         </Typography>
         <Typography
           variant="body1"
@@ -322,7 +322,7 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
                                 onChange={(e) => onUpdateSize(item.id, e.target.value)}
                                 sx={{ fontSize: '0.875rem' }}
                               >
-                                {['Small','Medium','Large'].map(s => (
+                                {(item.sizes && item.sizes.length > 0 ? item.sizes : ['Small','Medium','Large']).map(s => (
                                   <MenuItem key={s} value={s}>{s}</MenuItem>
                                 ))}
                               </Select>

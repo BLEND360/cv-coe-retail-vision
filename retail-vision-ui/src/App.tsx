@@ -155,6 +155,7 @@ function App() {
         detectionId: detection.id,
         confidence: detection.confidence,
         ...(item.size !== undefined && { size: item.size }),
+        ...(item.sizes && item.sizes.length > 0 && { sizes: item.sizes }),
         ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
       }));
       setCartItems(prev => [...prev, ...newItems]);

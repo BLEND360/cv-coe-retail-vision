@@ -35,6 +35,7 @@ export type ProductCartItem = {
   detectionId: number;
   confidence: number;
   size?: string;
+  sizes?: string[];
   color?: string;
 };
 
