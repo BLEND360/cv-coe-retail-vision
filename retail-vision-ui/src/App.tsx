@@ -5,18 +5,8 @@ import VideoPlayer from './components/VideoPlayer';
 import InferencePanel from './components/InferencePanel';
 import ShoppingCart from './components/ShoppingCart';
 import { brand } from './config/brands';
+import type { CartItem, ProductCartItem, ExperienceCartItem } from './types';
 import './App.css';
-
-interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  detectionId: number;
-  confidence: number;
-  size?: string;
-  color?: string;
-}
 
 const theme = createTheme({
   palette: {
@@ -136,22 +126,54 @@ function App() {
   };
 
   const addToCart = (detection: { id: number; class_name: string; confidence: number }) => {
-    const cartItemId = `${detection.id}-${Date.now()}`;
-    
-    // List of clothing items that need size and color options
+    const baseId = `${detection.id}-${Date.now()}`;
+    const className = detection.class_name.toLowerCase();
+    const catalogEntry = brand.catalog?.[className];
+
+    if (catalogEntry?.kind === 'experience') {
+      const newItems: ExperienceCartItem[] = catalogEntry.options.map((opt, idx) => ({
+        kind: 'experience',
+        id: `${baseId}-exp-${idx}`,
+        name: opt.name,
+        time: opt.time,
+        duration: opt.duration,
+        selected: idx < 2,
+        detectionId: detection.id,
+        confidence: detection.confidence,
+      }));
+      setCartItems(prev => [...prev, ...newItems]);
+      return;
+    }
+
+    if (catalogEntry?.kind === 'product') {
+      const newItems: ProductCartItem[] = catalogEntry.items.map((item, idx) => ({
+        kind: 'product',
+        id: `${baseId}-prod-${idx}`,
+        name: item.name,
+        price: item.price,
+        quantity: 1,
+        detectionId: detection.id,
+        confidence: detection.confidence,
+        ...(item.size !== undefined && { size: item.size }),
+        ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
+      }));
+      setCartItems(prev => [...prev, ...newItems]);
+      return;
+    }
+
     const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
-    const isClothing = clothingItems.includes(detection.class_name.toLowerCase());
-    
-    const newItem: CartItem = {
-      id: cartItemId,
+    const isClothing = clothingItems.includes(className);
+    const fallback: ProductCartItem = {
+      kind: 'product',
+      id: baseId,
       name: detection.class_name,
       price: 99,
       quantity: 1,
       detectionId: detection.id,
       confidence: detection.confidence,
-      ...(isClothing && { size: 'M', color: 'Black' })
+      ...(isClothing && { size: 'M', color: 'Black' }),
     };
-    setCartItems(prev => [...prev, newItem]);
+    setCartItems(prev => [...prev, fallback]);
   };
 
   const removeFromCart = (itemId: string) => {
@@ -163,25 +185,41 @@ function App() {
       removeFromCart(itemId);
       return;
     }
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, quantity: newQuantity } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, quantity: newQuantity }
+          : item
       )
     );
   };
 
   const updateSize = (itemId: string, newSize: string) => {
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, size: newSize } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, size: newSize }
+          : item
       )
     );
   };
 
   const updateColor = (itemId: string, newColor: string) => {
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, color: newColor } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, color: newColor }
+          : item
+      )
+    );
+  };
+
+  const toggleSelected = (itemId: string) => {
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'experience'
+          ? { ...item, selected: !item.selected }
+          : item
       )
     );
   };
@@ -379,12 +417,13 @@ function App() {
                   flexDirection: 'column',
                   overflow: 'hidden'
                 }}>
-                  <ShoppingCart 
+                  <ShoppingCart
                     cartItems={cartItems}
                     onRemoveItem={removeFromCart}
                     onUpdateQuantity={updateQuantity}
                     onUpdateSize={updateSize}
                     onUpdateColor={updateColor}
+                    onToggleSelected={toggleSelected}
                   />
                 </Paper>
               </Box>
