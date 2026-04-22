@@ -1,5 +1,6 @@
 import underArmourLogo from '../assets/under-armour-logo.png';
 import blendLogo from '../assets/blend-logo.png';
+import type { CatalogEntry } from '../types';
 
 export interface BrandConfig {
   name: string;
@@ -10,6 +11,7 @@ export interface BrandConfig {
   videoPath: string; // backend video file path
   tagline: string;
   yoloeClasses: string[];
+  catalog?: Record<string, CatalogEntry>;
 }
 
 const brands: Record<string, BrandConfig> = {
