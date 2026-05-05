@@ -46,6 +46,7 @@ export type ExperienceCartItem = {
   time: string;
   duration: string;
   selected: boolean;
+  booked: boolean;
   detectionId: number;
   confidence: number;
 };

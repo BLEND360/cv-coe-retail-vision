@@ -26,7 +26,7 @@ RETAIL_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
                   "monitor", "trash can", "chair", "shirt", "running pants",
                   "running shoes", "jacket", "gloves"]
 HOSPITALITY_CLASSES = ["pool", "bar", "coffee shop", "lounge chair",
-                       "umbrella", "restaurant"]
+                       "umbrella", "restaurant", "sea", "beach"]
 BRAND_CLASSES_MAP = {
     "under-armour": RETAIL_CLASSES,
     "blend360":     RETAIL_CLASSES,

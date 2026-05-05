@@ -138,10 +138,16 @@ function App() {
         time: opt.time,
         duration: opt.duration,
         selected: idx < 2,
+        booked: false,
         detectionId: detection.id,
         confidence: detection.confidence,
       }));
-      setCartItems(prev => [...prev, ...newItems]);
+      // Drop any existing unbooked experiences so the menu reflects only the latest inference.
+      // Booked experiences stay in the shopping cart.
+      setCartItems(prev => [
+        ...prev.filter(item => !(item.kind === 'experience' && !item.booked)),
+        ...newItems,
+      ]);
       return;
     }
 
@@ -225,6 +231,16 @@ function App() {
     );
   };
 
+  const bookSelected = () => {
+    setCartItems(prev =>
+      prev.map(item =>
+        item.kind === 'experience' && item.selected && !item.booked
+          ? { ...item, booked: true, selected: false }
+          : item
+      )
+    );
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -257,8 +273,8 @@ function App() {
         </Box>
 
         {/* Header Section */}
-        <Box sx={{ 
-          py: 4, 
+        <Box sx={{
+          py: brand.name === 'Hyatt' ? 2 : 4,
           px: 6, // Match main content padding for symmetry
           textAlign: 'center',
           flexShrink: 0
@@ -287,20 +303,22 @@ function App() {
           >
             {brand.tagline}
           </Typography>
-          <Typography 
-            variant="body1" 
-            color="text.secondary" 
-            sx={{ 
-              fontWeight: 400,
-              fontSize: { xs: '0.875rem', md: '1rem' },
-              maxWidth: '800px',
-              mx: 'auto',
-              lineHeight: 1.6,
-              mb: 2
-            }}
-          >
-            <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
-          </Typography>
+          {brand.name !== 'Hyatt' && (
+            <Typography
+              variant="body1"
+              color="text.secondary"
+              sx={{
+                fontWeight: 400,
+                fontSize: { xs: '0.875rem', md: '1rem' },
+                maxWidth: '800px',
+                mx: 'auto',
+                lineHeight: 1.6,
+                mb: 2
+              }}
+            >
+              <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
+            </Typography>
+          )}
           
           {/* Show Inference Panel Switch */}
           <Box sx={{ 
@@ -347,7 +365,7 @@ function App() {
             justifyContent: showInferencePanel ? 'flex-start' : 'center' // Center when inference panel is hidden
           }}>
             {/* Video Player - Expands when inference panel is hidden */}
-            <Box sx={{ 
+            <Box sx={{
               flex: showInferencePanel ? '0 0 calc(50% - 6px)' : '0 0 calc(62.5% - 6px)', // Expand to take inference panel space
               height: '100%',
               transition: 'flex 0.3s ease-in-out' // Smooth transition
@@ -368,7 +386,7 @@ function App() {
             </Box>
 
             {/* Right Side Panel - Expands when inference panel is hidden */}
-            <Box sx={{ 
+            <Box sx={{
               flex: showInferencePanel ? '0 0 calc(50% - 6px)' : '0 0 calc(37.5% - 6px)', // Expand to take inference panel space
               height: '100%',
               display: 'flex',
@@ -425,6 +443,12 @@ function App() {
                     onUpdateSize={updateSize}
                     onUpdateColor={updateColor}
                     onToggleSelected={toggleSelected}
+                    onBookSelected={bookSelected}
+                    layout={
+                      brand.catalog && Object.values(brand.catalog).some(e => e.kind === 'experience')
+                        ? 'split'
+                        : 'unified'
+                    }
                   />
                 </Paper>
               </Box>
