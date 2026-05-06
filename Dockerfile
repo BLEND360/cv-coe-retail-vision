@@ -3,8 +3,8 @@
 #
 # CPU build (default):   docker build -t retail-vision .
 # GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
-# Brand build:           docker build --build-arg BRAND=hyatt -t retail-vision-hyatt .
-#                        (supported brands: blend360, under-armour, hyatt)
+# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
+#                        (default brand: hyatt; supported: hyatt, blend360, under-armour)
 #
 # CPU run:               docker run -p 8000:8000 retail-vision
 # GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
@@ -39,7 +39,7 @@ COPY retail-vision-ui/tsconfig.json ./
 
 # Build the application
 # BRAND arg selects logo, video, and tagline (default: under-armour)
-ARG BRAND=blend360
+ARG BRAND=hyatt
 ENV REACT_APP_API_URL="" \
     REACT_APP_BRAND=${BRAND}
 RUN npm run build
@@ -124,7 +124,7 @@ RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
 RUN mkdir -p backend/models
 
 # Set environment variables for container deployment
-ARG BRAND=blend360
+ARG BRAND=hyatt
 ENV FRONTEND_DIR=/var/www/html \
     BRAND=${BRAND}
 
