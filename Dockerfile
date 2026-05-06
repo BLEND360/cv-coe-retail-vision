@@ -1,13 +1,11 @@
-# Multi-stage Dockerfile for Retail Vision Application
+# Multi-stage Dockerfile for Retail Vision Application (Hyatt / hospitality brand)
 # Supports both CPU and GPU (NVIDIA CUDA) automatically
 #
-# CPU build (default):   docker build -t retail-vision .
-# GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
-# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
-#                        (default brand: hyatt; supported: hyatt, blend360, under-armour)
+# CPU build (default):   docker build -t retail-vision-hyatt .
+# GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-hyatt-gpu .
 #
-# CPU run:               docker run -p 8000:8000 retail-vision
-# GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
+# CPU run:               docker run -p 8000:8000 retail-vision-hyatt
+# GPU run:               docker run --gpus all -p 8000:8000 retail-vision-hyatt-gpu
 
 ARG BASE_IMAGE=python:3.11-slim
 
@@ -37,11 +35,9 @@ COPY retail-vision-ui/src ./src
 COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
-# Build the application
-# BRAND arg selects logo, video, and tagline (default: under-armour)
-ARG BRAND=hyatt
+# Build the application (brand is hard-coded for this image)
 ENV REACT_APP_API_URL="" \
-    REACT_APP_BRAND=${BRAND}
+    REACT_APP_BRAND=hyatt
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
@@ -105,8 +101,8 @@ COPY retail-vision-ui/backend/ ./backend/
 # Copy built frontend from frontend-build stage
 COPY --from=frontend-build /app/frontend/build /var/www/html
 
-# Copy video files for the demo
-COPY retail-vision-ui/public/*.mp4 ./public/
+# Copy video file for the demo (Hyatt brand)
+COPY retail-vision-ui/public/Hyatt.mp4 ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
 # --fail makes curl return exit code 22 on HTTP errors (e.g. 404, 403)
@@ -123,10 +119,10 @@ RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
 # Create necessary directories
 RUN mkdir -p backend/models
 
-# Set environment variables for container deployment
-ARG BRAND=hyatt
+# Set environment variables for container deployment (Hyatt brand hard-coded)
 ENV FRONTEND_DIR=/var/www/html \
-    BRAND=${BRAND}
+    VIDEO_PATH="/app/public/Hyatt.mp4" \
+    BRAND=hyatt
 
 # Set working directory to backend for model path resolution
 WORKDIR /app/backend
@@ -138,5 +134,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# BRAND env var is read by the backend's BRAND_VIDEO_MAP to pick the right video.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
