@@ -429,11 +429,18 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         if yolo_e_model is None:
             return {"error": "No YOLO-E model available"}
 
+        timings: Dict[str, float] = {}
+
         # Convert frame to PIL Image for YOLOE
+        t0 = time.perf_counter()
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(frame_rgb)
+        timings["pil_convert_ms"] = (time.perf_counter() - t0) * 1000
 
         # Parse text prompt into classes and set them on the model
+        # _set_classes_cached is the critical-path step: a cache miss here
+        # rebuilds MobileCLIP embeddings (~2-3s on CPU). Time it to detect that.
+        t0 = time.perf_counter()
         if text_prompt:
             try:
                 prompt_classes = [cls.strip() for cls in text_prompt.split(',')
@@ -444,8 +451,10 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                     logger.warning("No valid classes found in text prompt")
             except Exception as e:
                 logger.warning(f"Could not set text prompts: {e}")
+        timings["set_classes_ms"] = (time.perf_counter() - t0) * 1000
 
         # Resize for faster inference (YOLO resizes internally anyway)
+        t0 = time.perf_counter()
         INFER_SIZE = 640
         orig_h, orig_w = frame.shape[:2]
         scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
@@ -455,11 +464,15 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         else:
             scale = 1.0
             infer_image = pil_image
+        timings["resize_ms"] = (time.perf_counter() - t0) * 1000
 
         # Run YOLO-E inference on resized image
+        t0 = time.perf_counter()
         results = yolo_e_model.predict(infer_image, conf=0.1, verbose=False)
+        timings["predict_ms"] = (time.perf_counter() - t0) * 1000
 
         if not results or len(results) == 0:
+            logger.info(f"YOLO-E timing (no results) {timings}")
             return {
                 "detections": [],
                 "total_objects": 0,
@@ -468,7 +481,8 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                 "text_prompt_used": text_prompt if text_prompt else "default_classes"
             }
 
-        # Process results from YOLOE
+        # Process results from YOLOE (mask extraction + per-detection annotation)
+        t0 = time.perf_counter()
         result = results[0]
         detections = []
         annotated_frame = frame.copy()
@@ -590,6 +604,15 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         # Highlight the clicked pixel
         cv2.circle(annotated_frame, (clicked_x, clicked_y), 5, (255, 0, 255),
                    -1)
+        timings["postprocess_ms"] = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"YOLO-E timing dets={len(detections)} "
+            f"set_classes={timings['set_classes_ms']:.0f}ms "
+            f"predict={timings['predict_ms']:.0f}ms "
+            f"postprocess={timings['postprocess_ms']:.0f}ms "
+            f"pil={timings['pil_convert_ms']:.0f}ms "
+            f"resize={timings['resize_ms']:.0f}ms"
+        )
 
         return {
             "detections": detections,
@@ -737,22 +760,24 @@ async def get_video_status():
 async def get_yolo_e_inference(request: ClickInferenceRequest):
     """Get YOLO-E inference results for a specific pixel click on a video frame"""
     try:
+        req_start = time.perf_counter()
+
         # Get frame at the specified video time
+        t0 = time.perf_counter()
         frame = get_frame_at_time(request.video_time)
+        frame_fetch_ms = (time.perf_counter() - t0) * 1000
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame not found")
 
-        # Log coordinate information for debugging
         logger.info(f"Click coordinates: ({request.x}, {request.y}) on frame "
                    f"{frame.shape[1]}x{frame.shape[0]}")
-        logger.info(f"Frame dimensions: {frame.shape[1]}x{frame.shape[0]}")
-        logger.info(f"Requested frame dimensions: "
-                   f"{request.frame_width}x{request.frame_height}")
 
         # Run YOLO-E inference in thread pool to avoid blocking the event loop
+        t0 = time.perf_counter()
         inference_result = await asyncio.to_thread(
             run_yolo_e_inference, frame, request.x, request.y, request.text_prompt
         )
+        inference_ms = (time.perf_counter() - t0) * 1000
 
         if "error" in inference_result:
             raise HTTPException(
@@ -760,10 +785,12 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
             )
 
         # Convert frames to base64
+        t0 = time.perf_counter()
         frame_base64 = frame_to_base64(frame)
         annotated_frame_base64 = frame_to_base64(
             inference_result.get("annotated_frame", frame)
         )
+        b64_ms = (time.perf_counter() - t0) * 1000
 
         # Create result
         result = DetectionResult(
@@ -776,6 +803,14 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
             clicked_object=inference_result.get("clicked_object"),
             inference_type="YOLO-E",
             text_prompt_used=inference_result.get("text_prompt_used")
+        )
+
+        total_ms = (time.perf_counter() - req_start) * 1000
+        logger.info(
+            f"/api/inference/yolo-e total={total_ms:.0f}ms "
+            f"frame_fetch={frame_fetch_ms:.0f}ms "
+            f"inference={inference_ms:.0f}ms "
+            f"base64={b64_ms:.0f}ms"
         )
 
         return result
