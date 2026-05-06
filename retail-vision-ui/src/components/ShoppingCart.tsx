@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -37,7 +37,8 @@ interface ShoppingCartProps {
   onUpdateSize: (itemId: string, newSize: string) => void;
   onUpdateColor: (itemId: string, newColor: string) => void;
   onToggleSelected: (itemId: string) => void;
-  onBookSelected: () => void;
+  onConfirmSelected: () => void;
+  menuRefreshVersion?: number; // bumped by parent each time new menu items arrive
   layout?: CartLayout;
 }
 
@@ -48,22 +49,39 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
   onUpdateSize,
   onUpdateColor,
   onToggleSelected,
-  onBookSelected,
+  onConfirmSelected,
+  menuRefreshVersion = 0,
   layout = 'unified'
 }) => {
   const productItems = cartItems.filter((i): i is ProductCartItem => i.kind === 'product');
   const experienceItems = cartItems.filter((i): i is ExperienceCartItem => i.kind === 'experience');
   const menuExperiences = experienceItems.filter(e => !e.booked);
   const bookedExperiences = experienceItems.filter(e => e.booked);
-  const totalPrice = productItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const totalItems = productItems.reduce((sum, item) => sum + item.quantity, 0);
-  const selectedExperiences = experienceItems.filter(e => e.selected && !e.booked).length;
+  // In split layout, products live in the menu (unordered) until confirmed.
+  // In unified layout (retail), all products are treated as ordered.
+  const menuProducts = layout === 'split' ? productItems.filter(p => !p.ordered) : [];
+  const orderedProducts = layout === 'split' ? productItems.filter(p => p.ordered) : productItems;
+  const totalPrice = orderedProducts.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalItems = orderedProducts.reduce((sum, item) => sum + item.quantity, 0);
+  const selectedMenuCount =
+    menuExperiences.filter(e => e.selected).length +
+    menuProducts.filter(p => p.selected).length;
+  const totalMenuCount = menuExperiences.length + menuProducts.length;
   const cartLineCount = totalItems + bookedExperiences.length;
 
   // In split layout, at most one section is expanded. Click an expanded section to collapse it.
   const [expandedSection, setExpandedSection] = useState<'experience' | 'cart' | null>('experience');
   const toggleSection = (key: 'experience' | 'cart') =>
     setExpandedSection(prev => (prev === key ? null : key));
+
+  // When the parent signals new menu items (a fresh inference matched the catalog),
+  // auto-expand the menu section so the user sees the new items.
+  useEffect(() => {
+    if (menuRefreshVersion > 0 && layout === 'split') {
+      setExpandedSection('experience');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuRefreshVersion]);
 
   const capitalizeFirstLetter = (str: string) => {
     return str.charAt(0).toUpperCase() + str.slice(1);
@@ -106,7 +124,9 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
     return clothingItems.includes(itemName.toLowerCase());
   };
 
-  if (cartItems.length === 0) {
+  // Empty-state placeholder is only used in unified (retail) layout. In split
+  // layout we always show both section headers, even when both sections are empty.
+  if (cartItems.length === 0 && layout !== 'split') {
     return (
       <Box sx={{
         height: '100%',
@@ -270,15 +290,15 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
     }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary' }}>
-          {selectedExperiences} Activities Selected
+          {selectedMenuCount} {selectedMenuCount === 1 ? 'item' : 'items'} selected
         </Typography>
       </Box>
       <Button
         variant="contained"
         fullWidth
-        disabled={selectedExperiences === 0}
+        disabled={selectedMenuCount === 0}
         onClick={() => {
-          onBookSelected();
+          onConfirmSelected();
           setExpandedSection('cart');
         }}
         sx={{
@@ -291,14 +311,65 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
           '&:hover': { bgcolor: 'grey.800' }
         }}
       >
-        Book Now
+        Add to Cart
       </Button>
     </Paper>
   );
 
+  const renderMenuProductCards = (items: ProductCartItem[]) => (
+    <Grid container spacing={2} sx={{ pr: 1 }}>
+      {items.map(item => (
+        <Grid item xs={12} key={item.id}>
+          <Card
+            variant="outlined"
+            sx={{
+              borderColor: item.selected ? 'primary.main' : 'grey.200',
+              borderWidth: item.selected ? 2 : 1,
+              borderRadius: 2,
+            }}
+          >
+            <CardContent sx={{ p: '16px !important' }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={item.selected}
+                      onChange={() => onToggleSelected(item.id)}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography sx={{ fontWeight: 600, color: 'text.primary' }}>
+                        {capitalizeFirstLetter(item.name)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ${item.price.toFixed(2)}
+                      </Typography>
+                    </Box>
+                  }
+                />
+                <IconButton
+                  size="small"
+                  onClick={() => onRemoveItem(item.id)}
+                  sx={{
+                    bgcolor: 'rgba(255, 59, 48, 0.1)',
+                    color: '#FF3B30',
+                    '&:hover': { bgcolor: 'rgba(255, 59, 48, 0.2)' },
+                  }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      ))}
+    </Grid>
+  );
+
   const productCards = (
     <Grid container spacing={2} sx={{ pr: 1 }}>
-      {productItems.map((item) => (
+      {orderedProducts.map((item) => (
         <Grid item xs={12} key={item.id}>
           <Card
             variant="outlined"
@@ -587,7 +658,19 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {bookedExperiences.length > 0 && renderBookedExperienceCards()}
-          {productItems.length > 0 && productCards}
+          {orderedProducts.length > 0 && productCards}
+        </Box>
+      );
+
+    const menuBody =
+      totalMenuCount === 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 4 }}>
+          Click on the video to surface experiences and items here.
+        </Typography>
+      ) : (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {menuExperiences.length > 0 && renderExperienceCards(menuExperiences)}
+          {menuProducts.length > 0 && renderMenuProductCards(menuProducts)}
         </Box>
       );
 
@@ -596,14 +679,10 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
           {renderSection(
             'experience',
-            'Experience Menu',
+            'Menu',
             <EventIcon sx={{ fontSize: 22, color: 'text.primary' }} />,
-            `${selectedExperiences} / ${menuExperiences.length}`,
-            menuExperiences.length > 0 ? renderExperienceCards(menuExperiences) : (
-              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 4 }}>
-                Click on a pool, sea, or beach to add experiences.
-              </Typography>
-            ),
+            `${selectedMenuCount} / ${totalMenuCount}`,
+            menuBody,
             experienceFooter,
           )}
           {renderSection(
@@ -612,7 +691,7 @@ const ShoppingCart: React.FC<ShoppingCartProps> = ({
             <ShoppingCartIcon sx={{ fontSize: 22, color: 'text.primary' }} />,
             `${cartLineCount} ${cartLineCount === 1 ? 'item' : 'items'}`,
             cartBody,
-            productFooter,
+            orderedProducts.length > 0 ? productFooter : null,
           )}
         </Box>
       </Box>

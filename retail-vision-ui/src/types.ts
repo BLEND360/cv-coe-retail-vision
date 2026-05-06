@@ -13,14 +13,20 @@ export type ExperienceCatalogOption = {
 };
 
 export type ProductCatalogEntry = {
+  id: string;
   kind: 'product';
   title: string;
+  // Each inner array is a trigger set whose classes must ALL be detected together.
+  // The entry fires if ANY trigger set is fully satisfied.
+  triggers: string[][];
   items: ProductCatalogItem[];
 };
 
 export type ExperienceCatalogEntry = {
+  id: string;
   kind: 'experience';
   title: string;
+  triggers: string[][];
   options: ExperienceCatalogOption[];
 };
 
@@ -32,6 +38,8 @@ export type ProductCartItem = {
   name: string;
   price: number;
   quantity: number;
+  selected: boolean;  // checkbox state in the menu section (split layout)
+  ordered: boolean;   // true once moved into the cart by Add to Cart
   detectionId: number;
   confidence: number;
   size?: string;

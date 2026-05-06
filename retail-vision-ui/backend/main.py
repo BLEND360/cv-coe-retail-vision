@@ -25,8 +25,10 @@ import torch.nn.functional as F
 RETAIL_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
                   "monitor", "trash can", "chair", "shirt", "running pants",
                   "running shoes", "jacket", "gloves"]
-HOSPITALITY_CLASSES = ["pool", "bar", "coffee shop", "lounge chair",
-                       "umbrella", "restaurant", "sea", "beach"]
+HOSPITALITY_CLASSES = ["pool", "lounge chair", "floats",
+                       "beach", "ocean",
+                       "golf shorts", "golfer", "golf club",
+                       "food"]
 BRAND_CLASSES_MAP = {
     "under-armour": RETAIL_CLASSES,
     "blend360":     RETAIL_CLASSES,

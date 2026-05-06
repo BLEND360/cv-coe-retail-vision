@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { CssBaseline, Box, Paper, Typography, Switch, FormControlLabel } from '@mui/material';
 import VideoPlayer from './components/VideoPlayer';
@@ -125,63 +125,105 @@ function App() {
     setLastClickData(clickData);
   };
 
-  const addToCart = (detection: { id: number; class_name: string; confidence: number }) => {
-    const baseId = `${detection.id}-${Date.now()}`;
-    const className = detection.class_name.toLowerCase();
-    const catalogEntry = brand.catalog?.[className];
+  // Bumped each time a new inference brings in new menu items, so the cart UI can
+  // auto-expand the menu section.
+  const [menuRefreshVersion, setMenuRefreshVersion] = useState(0);
 
-    if (catalogEntry?.kind === 'experience') {
-      const newItems: ExperienceCartItem[] = catalogEntry.options.map((opt, idx) => ({
-        kind: 'experience',
-        id: `${baseId}-exp-${idx}`,
-        name: opt.name,
-        time: opt.time,
-        duration: opt.duration,
-        selected: idx < 2,
-        booked: false,
-        detectionId: detection.id,
-        confidence: detection.confidence,
-      }));
-      // Drop any existing unbooked experiences so the menu reflects only the latest inference.
-      // Booked experiences stay in the shopping cart.
-      setCartItems(prev => [
-        ...prev.filter(item => !(item.kind === 'experience' && !item.booked)),
-        ...newItems,
-      ]);
+  // Set-based catalog matching: a catalog entry fires only when ANY of its trigger
+  // sets is fully present in the inference's detections. For hospitality brands
+  // (catalog defined), every inference rebuilds the menu (clears prior unbooked /
+  // unordered items). For retail brands (no catalog), single-class clicks add a
+  // $99 generic item directly to the cart.
+  const handleInference = useCallback((
+    clickedDetection: { id: number; class_name: string; confidence: number } | null,
+    detections: Array<{ id: number; class_name: string; confidence: number }>,
+  ) => {
+    const baseId = `${Date.now()}`;
+    const isHospitality = (brand.catalog ?? []).length > 0;
+
+    // Keep only items the user has confirmed (booked experiences + ordered products).
+    // Everything else is "menu" content that gets rebuilt by the new inference.
+    const keepConfirmed = (items: CartItem[]) => items.filter(item =>
+      (item.kind === 'experience' && item.booked) ||
+      (item.kind === 'product' && item.ordered)
+    );
+
+    if (isHospitality) {
+      const detectedClasses = new Set(detections.map(d => d.class_name.toLowerCase()));
+      const matched = (brand.catalog ?? []).filter(entry =>
+        entry.triggers.some(triggerSet =>
+          triggerSet.every(t => detectedClasses.has(t.toLowerCase()))
+        )
+      );
+
+      if (matched.length === 0) {
+        // Clear menu, keep cart. Don't bump menuRefreshVersion (no new menu items).
+        setCartItems(keepConfirmed);
+        return;
+      }
+
+      const newExperiences: ExperienceCartItem[] = [];
+      const newProducts: ProductCartItem[] = [];
+
+      matched.forEach(entry => {
+        if (entry.kind === 'experience') {
+          entry.options.forEach((opt, idx) => {
+            newExperiences.push({
+              kind: 'experience',
+              id: `${baseId}-${entry.id}-exp-${idx}`,
+              name: opt.name,
+              time: opt.time,
+              duration: opt.duration,
+              selected: idx < 2,
+              booked: false,
+              detectionId: clickedDetection?.id ?? -1,
+              confidence: clickedDetection?.confidence ?? 1,
+            });
+          });
+        } else {
+          entry.items.forEach((item, idx) => {
+            newProducts.push({
+              kind: 'product',
+              id: `${baseId}-${entry.id}-prod-${idx}`,
+              name: item.name,
+              price: item.price,
+              quantity: 1,
+              selected: true,
+              ordered: false,
+              detectionId: clickedDetection?.id ?? -1,
+              confidence: clickedDetection?.confidence ?? 1,
+              ...(item.size !== undefined && { size: item.size }),
+              ...(item.sizes && item.sizes.length > 0 && { sizes: item.sizes }),
+              ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
+            });
+          });
+        }
+      });
+
+      setCartItems(prev => [...keepConfirmed(prev), ...newExperiences, ...newProducts]);
+      setMenuRefreshVersion(v => v + 1);
       return;
     }
 
-    if (catalogEntry?.kind === 'product') {
-      const newItems: ProductCartItem[] = catalogEntry.items.map((item, idx) => ({
-        kind: 'product',
-        id: `${baseId}-prod-${idx}`,
-        name: item.name,
-        price: item.price,
-        quantity: 1,
-        detectionId: detection.id,
-        confidence: detection.confidence,
-        ...(item.size !== undefined && { size: item.size }),
-        ...(item.sizes && item.sizes.length > 0 && { sizes: item.sizes }),
-        ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
-      }));
-      setCartItems(prev => [...prev, ...newItems]);
-      return;
-    }
-
+    // Retail fallback (brand has no catalog).
+    if (!clickedDetection) return;
+    const className = clickedDetection.class_name.toLowerCase();
     const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
     const isClothing = clothingItems.includes(className);
     const fallback: ProductCartItem = {
       kind: 'product',
-      id: baseId,
-      name: detection.class_name,
+      id: `${clickedDetection.id}-${baseId}`,
+      name: clickedDetection.class_name,
       price: 99,
       quantity: 1,
-      detectionId: detection.id,
-      confidence: detection.confidence,
+      selected: true,
+      ordered: true,
+      detectionId: clickedDetection.id,
+      confidence: clickedDetection.confidence,
       ...(isClothing && { size: 'M', color: 'Black' }),
     };
     setCartItems(prev => [...prev, fallback]);
-  };
+  }, []);
 
   const removeFromCart = (itemId: string) => {
     setCartItems(prev => prev.filter(item => item.id !== itemId));
@@ -223,21 +265,26 @@ function App() {
 
   const toggleSelected = (itemId: string) => {
     setCartItems(prev =>
-      prev.map(item =>
-        item.id === itemId && item.kind === 'experience'
-          ? { ...item, selected: !item.selected }
-          : item
-      )
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        if (item.kind === 'experience' && !item.booked) return { ...item, selected: !item.selected };
+        if (item.kind === 'product' && !item.ordered) return { ...item, selected: !item.selected };
+        return item;
+      })
     );
   };
 
-  const bookSelected = () => {
+  const confirmSelected = () => {
     setCartItems(prev =>
-      prev.map(item =>
-        item.kind === 'experience' && item.selected && !item.booked
-          ? { ...item, booked: true, selected: false }
-          : item
-      )
+      prev.map(item => {
+        if (item.kind === 'experience' && item.selected && !item.booked) {
+          return { ...item, booked: true, selected: false };
+        }
+        if (item.kind === 'product' && item.selected && !item.ordered) {
+          return { ...item, ordered: true, selected: false };
+        }
+        return item;
+      })
     );
   };
 
@@ -414,7 +461,7 @@ function App() {
                 }}>
                   <InferencePanel 
                     lastClickData={lastClickData}
-                    onAddToCart={addToCart}
+                    onInference={handleInference}
                   />
                 </Paper>
               </Box>
@@ -443,9 +490,10 @@ function App() {
                     onUpdateSize={updateSize}
                     onUpdateColor={updateColor}
                     onToggleSelected={toggleSelected}
-                    onBookSelected={bookSelected}
+                    onConfirmSelected={confirmSelected}
+                    menuRefreshVersion={menuRefreshVersion}
                     layout={
-                      brand.catalog && Object.values(brand.catalog).some(e => e.kind === 'experience')
+                      brand.catalog?.some(e => e.kind === 'experience')
                         ? 'split'
                         : 'unified'
                     }

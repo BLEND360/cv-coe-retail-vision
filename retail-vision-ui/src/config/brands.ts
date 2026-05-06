@@ -12,7 +12,7 @@ export interface BrandConfig {
   videoPath: string; // backend video file path
   tagline: string;
   yoloeClasses: string[];
-  catalog?: Record<string, CatalogEntry>;
+  catalog?: CatalogEntry[];
 }
 
 const brands: Record<string, BrandConfig> = {
@@ -53,61 +53,60 @@ const brands: Record<string, BrandConfig> = {
     videoPath: '../public/Hyatt.mp4',
     tagline: 'Hyatt - Hospitality',
     yoloeClasses: [
-      'pool', 'bar', 'coffee shop', 'lounge chair', 'umbrella', 'restaurant',
-      'sea', 'beach',
+      'pool', 'lounge chair', 'floats',
+      'beach', 'ocean',
+      'golf shorts', 'golfer', 'golf club',
+      'food',
     ],
-    catalog: {
-      pool: {
+    catalog: [
+      {
+        id: 'pool',
         kind: 'experience',
-        title: 'Book an Experience',
+        title: 'Pool Experience',
+        triggers: [['pool', 'lounge chair'], ['floats']],
         options: [
-          { name: 'Water aerobics',          time: '9:00 - 10:00 AM',  duration: '45 min' },
+          { name: 'Water aerobics',          time: '9:00 - 10:00 AM',     duration: '45 min' },
           { name: 'Aqua yoga',               time: '11:00 AM - 12:00 PM', duration: '45 min' },
-          { name: 'Marco polo championship', time: '2:00 - 3:00 PM',   duration: '45 min' },
-          { name: 'Zumba classes',           time: '5:00 - 6:00 PM',   duration: '45 min' },
+          { name: 'Marco polo championship', time: '2:00 - 3:00 PM',      duration: '45 min' },
+          { name: 'Zumba classes',           time: '5:00 - 6:00 PM',      duration: '45 min' },
         ],
       },
-      'coffee shop': {
-        kind: 'product',
-        title: 'Shopping Cart',
-        items: [
-          { name: 'Espresso',   price: 5.99, size: 'Medium', sizes: ['Small', 'Medium', 'Large'] },
-          { name: 'Americano',  price: 5.99, size: 'Medium', sizes: ['Small', 'Medium', 'Large'] },
-          { name: 'Latte',      price: 5.99, size: 'Medium', sizes: ['Small', 'Medium', 'Large'] },
-          { name: 'Cappuccino', price: 5.99, size: 'Medium', sizes: ['Small', 'Medium', 'Large'] },
-        ],
-      },
-      bar: {
-        kind: 'product',
-        title: 'Bar Menu',
-        items: [
-          { name: 'Mojito',        price: 12 },
-          { name: 'Margarita',     price: 13 },
-          { name: 'Old Fashioned', price: 14 },
-          { name: 'House Red',     price: 11 },
-        ],
-      },
-      sea: {
+      {
+        id: 'sea',
         kind: 'experience',
-        title: 'Book an Experience',
+        title: 'Sea Experience',
+        triggers: [['ocean'], ['beach']],
         options: [
-          { name: 'Dolphin watching', time: '7:00 - 8:00 AM',    duration: '45 min' },
-          { name: 'Snorkeling tour',  time: '9:00 - 10:00 AM',   duration: '45 min' },
+          { name: 'Dolphin watching', time: '7:00 - 8:00 AM',     duration: '45 min' },
+          { name: 'Snorkeling tour',  time: '9:00 - 10:00 AM',    duration: '45 min' },
           { name: 'Kayak rental',     time: '11:00 AM - 12:00 PM', duration: '45 min' },
-          { name: 'Sunset cruise',    time: '5:00 - 6:00 PM',    duration: '45 min' },
+          { name: 'Sunset cruise',    time: '5:00 - 6:00 PM',     duration: '45 min' },
         ],
       },
-      beach: {
+      {
+        id: 'golf',
         kind: 'experience',
-        title: 'Book an Experience',
+        title: 'Golf Classes',
+        triggers: [['golf shorts', 'golfer', 'golf club']],
         options: [
-          { name: 'Beach volleyball',    time: '10:00 - 11:00 AM', duration: '45 min' },
-          { name: 'Sand castle workshop', time: '1:00 - 2:00 PM',  duration: '45 min' },
-          { name: 'Sunset yoga',         time: '6:00 - 7:00 PM',   duration: '45 min' },
-          { name: 'Bonfire gathering',   time: '8:00 - 9:00 PM',   duration: '45 min' },
+          { name: 'Driving range',  time: '8:00 - 9:00 AM',  duration: '45 min' },
+          { name: 'Group lesson',   time: '10:00 - 11:00 AM', duration: '45 min' },
+          { name: 'Pro lesson',     time: '1:00 - 2:00 PM',  duration: '45 min' },
+          { name: 'Putting clinic', time: '4:00 - 5:00 PM',  duration: '45 min' },
         ],
       },
-    },
+      {
+        id: 'restaurant',
+        kind: 'product',
+        title: 'Restaurant Menu',
+        triggers: [['food']],
+        items: [
+          { name: 'Edamames', price: 8 },
+          { name: 'Pad Thai', price: 18 },
+          { name: 'Sushi',    price: 24 },
+        ],
+      },
+    ],
   },
 };
 
