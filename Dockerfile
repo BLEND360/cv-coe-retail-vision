@@ -2,7 +2,12 @@
 # Supports both CPU and GPU (NVIDIA CUDA) automatically
 #
 # CPU build (default):   docker build -t retail-vision-hyatt .
-# GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-hyatt-gpu .
+# GPU build:             docker build \
+#                          --build-arg BASE_IMAGE=nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 \
+#                          --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121 \
+#                          -t retail-vision-hyatt-gpu .
+# (BASE_IMAGE and TORCH_INDEX_URL must match. The ECS-optimized GPU AMI ships
+# with NVIDIA driver 12.x, which is incompatible with CUDA 11.8 PyTorch wheels.)
 #
 # CPU run:               docker run -p 8000:8000 retail-vision-hyatt
 # GPU run:               docker run --gpus all -p 8000:8000 retail-vision-hyatt-gpu
@@ -79,6 +84,15 @@ WORKDIR /app
 # Copy Python requirements and install dependencies
 # For GPU images, PyTorch with CUDA is installed via requirements
 COPY retail-vision-ui/backend/requirements.txt ./backend/
+
+# If a CUDA-specific PyTorch wheel index is provided (GPU builds), install
+# torch / torchvision from there BEFORE YOLOE so transitive deps don't pull
+# the default PyPI (CUDA 11.8) wheel that won't initialize on driver 12.x.
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+      echo "Installing CUDA-matched torch from $TORCH_INDEX_URL"; \
+      pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchvision; \
+    fi
 
 # Copy YOLOE source from native download stage (avoids QEMU network issues)
 COPY --from=yoloe-src /tmp/yoloe /tmp/yoloe
