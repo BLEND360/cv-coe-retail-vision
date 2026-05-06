@@ -3,7 +3,8 @@
 #
 # CPU build (default):   docker build -t retail-vision .
 # GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
-# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
+# Brand build:           docker build --build-arg BRAND=hyatt -t retail-vision-hyatt .
+#                        (supported brands: blend360, under-armour, hyatt)
 #
 # CPU run:               docker run -p 8000:8000 retail-vision
 # GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
@@ -137,10 +138,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Set VIDEO_PATH based on brand at runtime, then start server
-CMD if [ "$BRAND" = "blend360" ]; then \
-      export VIDEO_PATH="/app/public/The BLEND360 Approach.mp4"; \
-    else \
-      export VIDEO_PATH="/app/public/Under-Armour.mp4"; \
-    fi && \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+# BRAND env var is read by the backend's BRAND_VIDEO_MAP to pick the right video.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
