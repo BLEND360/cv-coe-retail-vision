@@ -41,6 +41,18 @@ def get_startup_classes():
     return BRAND_CLASSES_MAP.get(brand_key, RETAIL_CLASSES)
 
 
+def classes_for_brand(brand_key):
+    """Return the YOLOE class list for a brand, falling back to the BRAND env
+    default and then the retail list."""
+    key = (brand_key or os.environ.get("BRAND", "")).lower()
+    return BRAND_CLASSES_MAP.get(key, RETAIL_CLASSES)
+
+
+def _class_key(classes):
+    """Order-preserving cache key for a class list."""
+    return tuple(classes)
+
+
 # Backwards-compatible alias for any code that still references YOLOE_CLASSES
 YOLOE_CLASSES = RETAIL_CLASSES
 
@@ -77,25 +89,23 @@ def _load_mobileclip():
 
 
 @torch.inference_mode()
-def _get_text_pe_direct(texts: List[str]):
+def _get_text_pe_direct(texts: List[str], model):
     """Generate text positional embeddings using our directly-loaded MobileCLIP.
 
     Replicates the logic of YOLOEModel.get_text_pe() but uses the Python
     mobileclip package so we never hit the TorchScript positional embedding bug.
+    Takes the target YOLOE model instance whose detection head builds the embeddings.
     """
     if not _load_mobileclip():
         return None
-
     tokens = _mobileclip_tokenizer(texts).to(
         next(_mobileclip_model.parameters()).device
     )
     txt_feats = _mobileclip_model.encode_text(tokens)
     txt_feats = txt_feats / txt_feats.norm(p=2, dim=-1, keepdim=True)
     txt_feats = txt_feats.reshape(1, len(texts), txt_feats.shape[-1])
-
-    # Pass through the YOLOE detection head's reprta layer (same as get_tpe)
     from ultralytics.nn.modules.head import YOLOEDetect
-    head = yolo_e_model.model.model[-1]
+    head = model.model.model[-1]
     assert isinstance(head, YOLOEDetect)
     return F.normalize(head.reprta(txt_feats), dim=-1, p=2)
 # --- End MobileCLIP fix ---
@@ -162,7 +172,7 @@ app = FastAPI(lifespan=lifespan)
 # CORS middleware to allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000", "http://localhost:8001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -178,10 +188,10 @@ if os.path.isdir(FRONTEND_DIR):
 
 # Global variables for model and video capture
 video_cap = None
-yolo_e_model = None
-# Cache for text embeddings to avoid rebuilding mobileclip on every request
-_cached_text_pe = None
-_cached_prompt_key = None
+# Cache of YOLOE instances keyed by class tuple. Each instance has its classes
+# set exactly once at load, so YOLOE never reshapes its class head at runtime.
+_models = {}
+yolo_e_model = None  # default model handle (set at startup) for legacy references
 
 
 class ClickInferenceRequest(BaseModel):
@@ -271,42 +281,31 @@ def download_yolo_e_v8l_model_direct() -> bool:
         return False
 
 
-def load_yolo_e_model():
-    """Load YOLO-E v8l model for efficient instance segmentation with text prompts"""
-    global yolo_e_model
-    try:
-        logger.info("Loading YOLO-E v8l model...")
+def _build_model_with_classes(classes):
+    """Load a fresh YOLOE instance and set `classes` on it exactly once."""
+    model_path = "yoloe-v8l-seg.pt"
+    if not os.path.exists(model_path):
+        if not download_yolo_e_v8l_model_direct():
+            raise RuntimeError("Failed to download YOLO-E v8l model")
+    model = YOLOE(model_path)
+    text_pe = _get_text_pe_direct(classes, model)
+    if text_pe is None:
+        text_pe = model.get_text_pe(classes)
+    model.set_classes(classes, text_pe)
+    logger.info(f"Built YOLOE instance for classes: {classes}")
+    return model
 
-        # Check if model file already exists
-        model_path = "yoloe-v8l-seg.pt"
 
-        if os.path.exists(model_path):
-            file_size = os.path.getsize(model_path) / (1024 * 1024)
-            logger.info(f"YOLO-E v8l model already exists: {model_path} "
-                       f"({file_size:.1f} MB)")
-        else:
-            # Download fresh model
-            logger.info("YOLO-E v8l model not found, downloading...")
-            if not download_yolo_e_v8l_model_direct():
-                logger.error("Failed to download YOLO-E v8l model")
-                return False
-
-        # Load the model
-        try:
-            yolo_e_model = YOLOE(model_path)
-
-            startup_classes = get_startup_classes()
-            _set_classes_cached(startup_classes)
-            logger.info(f"YOLO-E v8l model loaded with brand classes: {startup_classes}")
-
-            return True
-        except Exception as load_error:
-            logger.error(f"Failed to load YOLO-E v8l model: {load_error}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Failed to load YOLO-E v8l model: {e}")
-        return False
+def get_model_for_brand(brand_key):
+    """Return a cached YOLOE instance whose classes match the brand. Brands with
+    identical class lists (blend360 + under-armour) share one instance."""
+    classes = classes_for_brand(brand_key)
+    key = _class_key(classes)
+    model = _models.get(key)
+    if model is None:
+        model = _build_model_with_classes(classes)
+        _models[key] = model
+    return model
 
 
 def frame_to_base64(frame: np.ndarray) -> str:
@@ -400,26 +399,6 @@ def find_object_at_pixel(
 
     return None
 
-
-def _set_classes_cached(prompt_classes: List[str]):
-    """Set model classes with cached text embeddings to avoid rebuilding mobileclip."""
-    global _cached_text_pe, _cached_prompt_key
-    prompt_key = tuple(prompt_classes)
-    if _cached_prompt_key == prompt_key and _cached_text_pe is not None:
-        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
-        return
-    try:
-        # Use our direct MobileCLIP loading (bypasses TorchScript pos_embed bug)
-        _cached_text_pe = _get_text_pe_direct(prompt_classes)
-        if _cached_text_pe is None:
-            # Fallback to YOLOE's built-in path
-            _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
-        _cached_prompt_key = prompt_key
-        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
-        logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
-    except Exception as pe_error:
-        logger.warning(f"Could not get text embeddings: {pe_error} -- using COCO classes")
-        return
 
 
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
