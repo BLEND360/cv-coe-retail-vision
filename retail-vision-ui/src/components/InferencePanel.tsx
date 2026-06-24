@@ -13,7 +13,7 @@ import {
   Paper
 } from '@mui/material';
 import { Psychology, Mouse } from '@mui/icons-material';
-import { brand } from '../config/brands';
+import { useBrand, useBrandKey } from '../config/BrandContext';
 
 interface Detection {
   id: number;
@@ -47,13 +47,15 @@ interface InferencePanelProps {
 type InferenceType = 'yolo-e';
 
 const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onInference }) => {
+  const brand = useBrand();
+  const { brandKey } = useBrandKey();
   const [inferenceData, setInferenceData] = useState<InferenceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAnnotated, setShowAnnotated] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [inferenceType] = useState<InferenceType>('yolo-e');
-  const [textPrompt] = useState<string>(brand.yoloeClasses.join(', '));
+  const textPrompt = brand.yoloeClasses.join(', ');
   const addedDetectionsRef = useRef<Set<string>>(new Set());
   const lastInferenceTimestampRef = useRef<number>(0);
 
@@ -74,7 +76,8 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onInfere
         x: clickData.x,
         y: clickData.y,
         frame_width: clickData.frameWidth,
-        frame_height: clickData.frameHeight
+        frame_height: clickData.frameHeight,
+        brand: brandKey,
       };
 
       // Add text prompt for YOLO-E
@@ -103,7 +106,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onInfere
     } finally {
       setLoading(false);
     }
-  }, [inferenceType, textPrompt]);
+  }, [inferenceType, textPrompt, brandKey]);
 
   // Listen for video clicks from the parent component
   useEffect(() => {
