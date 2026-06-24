@@ -150,6 +150,11 @@ function App() {
     clickedDetection: { id: number; class_name: string; confidence: number } | null,
     detections: Array<{ id: number; class_name: string; confidence: number }>,
   ) => {
+    const allowed = new Set(brand.yoloeClasses.map(c => c.toLowerCase()));
+    const inBrand = (c: { class_name: string }) => allowed.has(c.class_name.toLowerCase());
+    const brandDetections = detections.filter(inBrand);
+    const brandClicked = clickedDetection && inBrand(clickedDetection) ? clickedDetection : null;
+
     const baseId = `${Date.now()}`;
     const isHospitality = (brand.catalog ?? []).length > 0;
 
@@ -161,7 +166,7 @@ function App() {
     );
 
     if (isHospitality) {
-      const detectedClasses = new Set(detections.map(d => d.class_name.toLowerCase()));
+      const detectedClasses = new Set(brandDetections.map(d => d.class_name.toLowerCase()));
       const matched = (brand.catalog ?? []).filter(entry =>
         entry.triggers.some(triggerSet =>
           triggerSet.every(t => detectedClasses.has(t.toLowerCase()))
@@ -188,8 +193,8 @@ function App() {
               duration: opt.duration,
               selected: idx < 2,
               booked: false,
-              detectionId: clickedDetection?.id ?? -1,
-              confidence: clickedDetection?.confidence ?? 1,
+              detectionId: brandClicked?.id ?? -1,
+              confidence: brandClicked?.confidence ?? 1,
             });
           });
         } else {
@@ -202,8 +207,8 @@ function App() {
               quantity: 1,
               selected: true,
               ordered: false,
-              detectionId: clickedDetection?.id ?? -1,
-              confidence: clickedDetection?.confidence ?? 1,
+              detectionId: brandClicked?.id ?? -1,
+              confidence: brandClicked?.confidence ?? 1,
               ...(item.size !== undefined && { size: item.size }),
               ...(item.sizes && item.sizes.length > 0 && { sizes: item.sizes }),
               ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
@@ -218,20 +223,20 @@ function App() {
     }
 
     // Retail fallback (brand has no catalog).
-    if (!clickedDetection) return;
-    const className = clickedDetection.class_name.toLowerCase();
+    if (!brandClicked) return;
+    const className = brandClicked.class_name.toLowerCase();
     const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
     const isClothing = clothingItems.includes(className);
     const fallback: ProductCartItem = {
       kind: 'product',
-      id: `${clickedDetection.id}-${baseId}`,
-      name: clickedDetection.class_name,
+      id: `${brandClicked.id}-${baseId}`,
+      name: brandClicked.class_name,
       price: 99,
       quantity: 1,
       selected: true,
       ordered: true,
-      detectionId: clickedDetection.id,
-      confidence: clickedDetection.confidence,
+      detectionId: brandClicked.id,
+      confidence: brandClicked.confidence,
       ...(isClothing && { size: 'M', color: 'Black' }),
     };
     setCartItems(prev => [...prev, fallback]);
