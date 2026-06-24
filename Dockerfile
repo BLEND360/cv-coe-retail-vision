@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for Retail Vision Application (Hyatt / hospitality brand)
+# Multi-stage Dockerfile for Retail Vision Application (all brands, runtime-switchable)
 # Supports both CPU and GPU (NVIDIA CUDA) automatically
 #
 # CPU build (default):   docker build -t retail-vision-hyatt .
@@ -40,9 +40,10 @@ COPY retail-vision-ui/src ./src
 COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
-# Build the application (brand is hard-coded for this image)
+# Build the application. All brands ship in one image; REACT_APP_BRAND only
+# picks which tab is selected first (switchable at runtime via the tab bar).
 ENV REACT_APP_API_URL="" \
-    REACT_APP_BRAND=hyatt
+    REACT_APP_BRAND=blend360
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
@@ -115,8 +116,8 @@ COPY retail-vision-ui/backend/ ./backend/
 # Copy built frontend from frontend-build stage
 COPY --from=frontend-build /app/frontend/build /var/www/html
 
-# Copy video file for the demo (Hyatt brand)
-COPY retail-vision-ui/public/Hyatt.mp4 ./public/
+# Copy all brand videos (the backend serves the right one per brand at runtime)
+COPY retail-vision-ui/public/*.mp4 ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
 # --fail makes curl return exit code 22 on HTTP errors (e.g. 404, 403)
@@ -133,10 +134,11 @@ RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
 # Create necessary directories
 RUN mkdir -p backend/models
 
-# Set environment variables for container deployment (Hyatt brand hard-coded)
+# Set environment variables for container deployment. BRAND sets the default
+# brand for requests that omit one; all brands are available at runtime.
 ENV FRONTEND_DIR=/var/www/html \
-    VIDEO_PATH="/app/public/Hyatt.mp4" \
-    BRAND=hyatt
+    VIDEO_PATH="/app/public/The BLEND360 Approach.mp4" \
+    BRAND=blend360
 
 # Set working directory to backend for model path resolution
 WORKDIR /app/backend
