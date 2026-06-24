@@ -73,7 +73,7 @@ def get_capture_for_brand(brand_key):
     cap = _video_caps.get(key)
     if cap is not None and cap.isOpened():
         return cap
-    path = video_path_for_brand(brand_key)
+    path = video_path_for_brand(key)
     if not os.path.exists(path):
         logger.error(f"Video file not found for brand {key}: {path}")
         return None
@@ -335,38 +335,6 @@ def frame_to_base64(frame: np.ndarray) -> str:
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
     return base64.b64encode(buffer).decode('utf-8')
 
-
-def load_video(video_path: str):
-    """Load the video file into a global OpenCV VideoCapture object."""
-    global video_cap
-    try:
-        logger.info(f"Loading video: {video_path}")
-
-        # Check if video file exists
-        if not os.path.exists(video_path):
-            logger.error(f"Video file not found: {video_path}")
-            return False
-
-        # Get file size for progress indication
-        file_size = os.path.getsize(video_path)
-        logger.info(f"Video file size: {file_size / (1024*1024):.2f} MB")
-
-        video_cap = cv2.VideoCapture(video_path)
-        if not video_cap.isOpened():
-            logger.error("Failed to open video file")
-            return False
-
-        # Get video properties
-        total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = video_cap.get(cv2.CAP_PROP_FPS)
-        duration = total_frames / fps if fps > 0 else 0
-
-        logger.info(f"Video loaded successfully: {total_frames} frames, "
-                   f"{fps:.2f} FPS, {duration:.2f}s duration")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load video: {e}")
-        return False
 
 
 def get_frame_at_time(target_time: float, brand_key=None) -> np.ndarray:
