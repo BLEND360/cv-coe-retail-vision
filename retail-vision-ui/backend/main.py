@@ -799,7 +799,7 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
         logger.info(f"YOLO-E text prompt request noted (classes fixed per brand): {prompt_classes}")
 
         return {
-            "message": "YOLO-E text prompts updated successfully",
+            "message": "Prompt noted; classes are fixed per brand model and cannot be changed at runtime",
             "classes": prompt_classes,
             "timestamp": time.time()
         }
