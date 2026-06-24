@@ -161,24 +161,26 @@ async def lifespan(app: FastAPI):
     if get_capture_for_brand(default_brand) is None:
         logger.error("Failed to open default brand video on startup.")
 
-    # Load YOLO-E v8l model with better error handling
+    # Preload one YOLOE instance per distinct brand class set
     try:
-        logger.info("Attempting to load YOLO-E v8l model...")
-        if not load_yolo_e_model():
-            logger.warning("Failed to initialize YOLO-E v8l model, will use fallback")
-        else:
-            logger.info("YOLO-E v8l model loaded successfully")
-            # Warmup inference to trigger PyTorch JIT compilation
+        seen = set()
+        for bkey in ("blend360", "hyatt"):  # one per distinct class set
+            ckey = _class_key(classes_for_brand(bkey))
+            if ckey in seen:
+                continue
+            seen.add(ckey)
+            model = get_model_for_brand(bkey)
+            global yolo_e_model
+            if yolo_e_model is None:
+                yolo_e_model = model  # default handle
             try:
-                dummy = np.zeros((64, 64, 3), dtype=np.uint8)
-                dummy_pil = Image.fromarray(dummy)
-                yolo_e_model.predict(dummy_pil, conf=0.1, verbose=False)
-                logger.info("Warmup inference complete")
+                dummy = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
+                model.predict(dummy, conf=0.1, verbose=False)
             except Exception as warmup_err:
-                logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
+                logger.warning(f"Warmup failed (non-critical): {warmup_err}")
+        logger.info("Brand models preloaded")
     except Exception as e:
-        logger.error(f"Error during YOLO-E v8l model loading: {e}")
-        logger.warning("Will use fallback models for inference")
+        logger.error(f"Error preloading brand models: {e}")
 
     yield
 
@@ -223,6 +225,7 @@ class ClickInferenceRequest(BaseModel):
     frame_width: int
     frame_height: int
     text_prompt: Optional[str] = None
+    brand: Optional[str] = None
 
 
 class DetectionResult(BaseModel):
@@ -386,10 +389,10 @@ def find_object_at_pixel(
 
 
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
-                        text_prompt: str = None) -> Dict[str, Any]:
+                        model=None, text_prompt: str = None) -> Dict[str, Any]:
     """Run YOLO-E inference - simple and direct like your reference code"""
     try:
-        if yolo_e_model is None:
+        if model is None:
             return {"error": "No YOLO-E model available"}
 
         timings: Dict[str, float] = {}
@@ -400,21 +403,8 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         pil_image = Image.fromarray(frame_rgb)
         timings["pil_convert_ms"] = (time.perf_counter() - t0) * 1000
 
-        # Parse text prompt into classes and set them on the model
-        # _set_classes_cached is the critical-path step: a cache miss here
-        # rebuilds MobileCLIP embeddings (~2-3s on CPU). Time it to detect that.
-        t0 = time.perf_counter()
-        if text_prompt:
-            try:
-                prompt_classes = [cls.strip() for cls in text_prompt.split(',')
-                                if cls.strip()]
-                if prompt_classes:
-                    _set_classes_cached(prompt_classes)
-                else:
-                    logger.warning("No valid classes found in text prompt")
-            except Exception as e:
-                logger.warning(f"Could not set text prompts: {e}")
-        timings["set_classes_ms"] = (time.perf_counter() - t0) * 1000
+        # Classes are fixed at model init; no per-request class switching needed.
+        timings["set_classes_ms"] = 0.0
 
         # Resize for faster inference (YOLO resizes internally anyway)
         t0 = time.perf_counter()
@@ -431,7 +421,7 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
 
         # Run YOLO-E inference on resized image
         t0 = time.perf_counter()
-        results = yolo_e_model.predict(infer_image, conf=0.1, verbose=False)
+        results = model.predict(infer_image, conf=0.1, verbose=False)
         timings["predict_ms"] = (time.perf_counter() - t0) * 1000
 
         if not results or len(results) == 0:
@@ -463,18 +453,18 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                     confidence = box.conf[0].item()
                     class_id = int(box.cls[0]) if hasattr(box, 'cls') and len(box.cls) > 0 else 0
 
-                    # Get class name from text prompt classes or model names
+                    # Get class name: prefer model.names (set at brand init), fall back to text_prompt
                     class_name = "unknown"
-                    if text_prompt:
+                    if hasattr(model, 'names') and model.names:
+                        if class_id < len(model.names):
+                            class_name = model.names[class_id]
+                        else:
+                            class_name = f"object_{class_id}"
+                    elif text_prompt:
                         prompt_classes = [cls.strip() for cls in text_prompt.split(',')
                                         if cls.strip()]
                         if class_id < len(prompt_classes):
                             class_name = prompt_classes[class_id]
-                        else:
-                            class_name = f"object_{class_id}"
-                    elif hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-                        if class_id < len(yolo_e_model.names):
-                            class_name = yolo_e_model.names[class_id]
                         else:
                             class_name = f"object_{class_id}"
                     else:
@@ -591,11 +581,11 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
 
 
 def run_yolo_e_v8l_inference(
-    frame: np.ndarray, text_prompt: str, confidence: float = 0.1
+    frame: np.ndarray, text_prompt: str, model=None, confidence: float = 0.1
 ) -> Dict[str, Any]:
     """Run YOLO-E v8l inference using the clean approach from reference code"""
     try:
-        if yolo_e_model is None:
+        if model is None:
             return {"error": "No YOLO-E model available"}
 
         # Convert frame to PIL Image for YOLOE
@@ -609,9 +599,6 @@ def run_yolo_e_v8l_inference(
         if not prompt_classes:
             return {"error": "No valid classes found in text prompt"}
 
-        # Set classes with cached text embeddings
-        _set_classes_cached(prompt_classes)
-
         # Resize for faster inference
         INFER_SIZE = 640
         orig_h, orig_w = frame.shape[:2]
@@ -624,7 +611,7 @@ def run_yolo_e_v8l_inference(
             infer_image = pil_image
 
         # Run YOLO-E inference on resized image
-        results = yolo_e_model.predict(infer_image, conf=confidence, verbose=False)
+        results = model.predict(infer_image, conf=confidence, verbose=False)
 
         if not results or len(results) == 0:
             return {
@@ -687,7 +674,7 @@ def run_yolo_e_v8l_inference(
             logger.warning(f"Supervision annotation failed, using fallback: "
                          f"{sv_error}")
             # Fallback to basic OpenCV annotation
-            return run_yolo_e_inference(frame, 0, 0, text_prompt)
+            return run_yolo_e_inference(frame, 0, 0, model, text_prompt)
 
     except Exception as e:
         logger.error(f"YOLO-E v8l inference error: {e}")
@@ -726,9 +713,9 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
     try:
         req_start = time.perf_counter()
 
-        # Get frame at the specified video time
+        # Get frame at the specified video time (brand-routed)
         t0 = time.perf_counter()
-        frame = get_frame_at_time(request.video_time)
+        frame = get_frame_at_time(request.video_time, request.brand)
         frame_fetch_ms = (time.perf_counter() - t0) * 1000
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame not found")
@@ -736,10 +723,13 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
         logger.info(f"Click coordinates: ({request.x}, {request.y}) on frame "
                    f"{frame.shape[1]}x{frame.shape[0]}")
 
+        # Select model for the request's brand
+        model = get_model_for_brand(request.brand)
+
         # Run YOLO-E inference in thread pool to avoid blocking the event loop
         t0 = time.perf_counter()
         inference_result = await asyncio.to_thread(
-            run_yolo_e_inference, frame, request.x, request.y, request.text_prompt
+            run_yolo_e_inference, frame, request.x, request.y, model, request.text_prompt
         )
         inference_ms = (time.perf_counter() - t0) * 1000
 
@@ -786,14 +776,13 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
 
 @app.post("/api/yolo-e/update-prompt")
 async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
-    """Update YOLO-E text prompts for object detection"""
+    """Update YOLO-E text prompts for object detection.
+    Note: in the multi-brand model, each model's classes are fixed at init.
+    This endpoint validates the prompt and reports the current default model's classes."""
     try:
-        if yolo_e_model is None:
-            raise HTTPException(
-                status_code=400, detail="YOLO-E model not loaded"
-            )
+        model = get_model_for_brand(None)
 
-        if not hasattr(yolo_e_model, 'set_classes'):
+        if not hasattr(model, 'names'):
             raise HTTPException(
                 status_code=400, detail="YOLO-E model doesn't support text prompts"
             )
@@ -807,13 +796,7 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
                 status_code=400, detail="No valid classes found in text prompt"
             )
 
-        # Update the model's text prompts (invalidates cache for new prompt)
-        try:
-            _set_classes_cached(prompt_classes)
-            logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
-        except Exception as e:
-            logger.error(f"Failed to update YOLO-E text prompts: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+        logger.info(f"YOLO-E text prompt request noted (classes fixed per brand): {prompt_classes}")
 
         return {
             "message": "YOLO-E text prompts updated successfully",
@@ -828,15 +811,12 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
 
 @app.get("/api/yolo-e/current-prompt")
 async def get_current_yolo_e_prompt():
-    """Get current YOLO-E text prompts"""
+    """Get current YOLO-E text prompts for the default brand model"""
     try:
-        if yolo_e_model is None:
-            raise HTTPException(
-                status_code=400, detail="YOLO-E model not loaded"
-            )
+        model = get_model_for_brand(None)
 
-        if hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-            current_classes = list(yolo_e_model.names.values())
+        if hasattr(model, 'names') and model.names:
+            current_classes = list(model.names.values())
             return {
                 "current_prompt": ", ".join(current_classes),
                 "classes": current_classes,
@@ -880,8 +860,9 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
         # Run YOLO-E v8l inference in thread pool to avoid blocking the event loop
+        model = get_model_for_brand(None)
         inference_result = await asyncio.to_thread(
-            run_yolo_e_v8l_inference, frame, request.text_prompt, request.confidence
+            run_yolo_e_v8l_inference, frame, request.text_prompt, model, request.confidence
         )
 
         if "error" in inference_result:
@@ -924,7 +905,8 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
 async def get_yolo_e_v8l_status():
     """Get the status of the YOLO-E v8l model"""
     try:
-        if yolo_e_model is None:
+        model = get_model_for_brand(None)
+        if model is None:
             return {
                 "model_loaded": False,
                 "model_name": "YOLO-E v8l",
@@ -942,9 +924,8 @@ async def get_yolo_e_v8l_status():
 
         # Try to get model properties
         try:
-            if hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-                model_info["available_classes"] = list(
-                    yolo_e_model.names.values())
+            if hasattr(model, 'names') and model.names:
+                model_info["available_classes"] = list(model.names.values())
             else:
                 model_info["available_classes"] = []
         except Exception as e:

@@ -23,3 +23,15 @@ def test_video_path_for_brand():
     assert main.video_path_for_brand("under-armour").endswith("Under-Armour.mp4")
     # Unknown brand falls back to a real path string (env/default), not None
     assert isinstance(main.video_path_for_brand("nope"), str)
+
+
+def test_click_request_accepts_brand():
+    req = main.ClickInferenceRequest(
+        video_time=0.0, x=1, y=2, frame_width=10, frame_height=10, brand="hyatt"
+    )
+    assert req.brand == "hyatt"
+    # brand is optional
+    req2 = main.ClickInferenceRequest(
+        video_time=0.0, x=1, y=2, frame_width=10, frame_height=10
+    )
+    assert req2.brand is None
