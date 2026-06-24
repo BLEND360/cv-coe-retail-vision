@@ -20,7 +20,7 @@ export const BrandProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
 function useBrandContext(): BrandContextValue {
   const ctx = useContext(BrandContext);
-  if (!ctx) throw new Error('useBrand must be used within a BrandProvider');
+  if (!ctx) throw new Error('useBrand/useBrandKey must be used within a BrandProvider');
   return ctx;
 }
 
