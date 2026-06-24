@@ -176,6 +176,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ onTimeUpdate, onVideoClick })
         <video
           ref={videoRef}
           src={videoUrl}
+          preload="auto"
           style={{
             width: '100%',
             height: '100%',

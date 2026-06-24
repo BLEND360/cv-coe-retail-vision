@@ -120,6 +120,7 @@ const TAB_ORDER = ['blend360', 'under-armour', 'hyatt'];
 function App() {
   const brand = useBrand();
   const { brandKey, setBrandKey } = useBrandKey();
+  const apiBase = process.env.REACT_APP_API_URL ?? 'http://localhost:8000';
 
   const [lastClickData, setLastClickData] = useState<{ x: number; y: number; currentTime: number; frameWidth: number; frameHeight: number } | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -312,7 +313,8 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{
-        height: '100vh',
+        minHeight: '100vh',
+        overflowY: 'auto',
         bgcolor: 'background.default',
         background: '#FFFFFF',
         display: 'flex',
@@ -337,6 +339,15 @@ function App() {
             <Tab key={key} value={key} label={brands[key].name} />
           ))}
         </Tabs>
+
+        {/* Hidden preloaders: warm the browser cache for every brand video at
+            startup so switching tabs plays the video immediately (the keyed
+            content subtree below remounts on switch and would otherwise refetch). */}
+        <Box sx={{ display: 'none' }} aria-hidden>
+          {Object.values(brands).map((cfg, i) => (
+            <video key={i} src={`${apiBase}${cfg.videoUrl}`} preload="auto" muted />
+          ))}
+        </Box>
 
         {/* Wrapper below the tab bar — positioning context for the logo */}
         <Box sx={{
@@ -444,13 +455,14 @@ function App() {
           </Box>
         </Box>
 
-        {/* Main Content Grid - Takes remaining space */}
+        {/* Main Content Grid - fills remaining space on tall viewports, keeps a
+            usable minimum on short ones (the page scrolls rather than clipping). */}
         <Box key={brandKey} sx={{
           flex: 1,
           px: 6,
           pb: 4,
-          minHeight: 0, // Important for flex child to shrink
-          overflow: 'hidden' // Prevent content from expanding beyond container
+          minHeight: { xs: 480, md: 560 },
+          overflow: 'visible'
         }}>
           <Box sx={{ 
             height: '100%', 

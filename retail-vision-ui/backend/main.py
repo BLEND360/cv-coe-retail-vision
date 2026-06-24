@@ -999,6 +999,7 @@ async def serve_video(video_name: str, request: Request):
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(content_length),
                 "Content-Type": "video/mp4",
+                "Cache-Control": "public, max-age=86400",
             },
         )
 
@@ -1016,6 +1017,7 @@ async def serve_video(video_name: str, request: Request):
             "Accept-Ranges": "bytes",
             "Content-Length": str(file_size),
             "Content-Type": "video/mp4",
+            "Cache-Control": "public, max-age=86400",
         },
     )
 
