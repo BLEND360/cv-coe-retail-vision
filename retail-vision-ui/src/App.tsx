@@ -114,6 +114,9 @@ const theme = createTheme({
   },
 });
 
+// Brand tab order (left to right). BLEND360 leads; unknown keys are ignored.
+const TAB_ORDER = ['blend360', 'under-armour', 'hyatt'];
+
 function App() {
   const brand = useBrand();
   const { brandKey, setBrandKey } = useBrandKey();
@@ -325,12 +328,13 @@ function App() {
           sx={{
             borderBottom: '1px solid rgba(0,0,0,0.08)',
             flexShrink: 0,
+            minHeight: 44,
             bgcolor: 'background.paper',
-            '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, fontSize: '1rem' },
+            '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, fontSize: '1rem', minHeight: 44 },
           }}
         >
-          {Object.entries(brands).map(([key, cfg]) => (
-            <Tab key={key} value={key} label={cfg.name} />
+          {TAB_ORDER.filter(key => brands[key]).map(key => (
+            <Tab key={key} value={key} label={brands[key].name} />
           ))}
         </Tabs>
 
@@ -365,7 +369,7 @@ function App() {
 
         {/* Header Section */}
         <Box sx={{
-          py: brand.name === 'Hyatt' ? 2 : 4,
+          py: brand.name === 'Hyatt' ? 1.5 : 2,
           px: 6, // Match main content padding for symmetry
           textAlign: 'center',
           flexShrink: 0
@@ -388,7 +392,7 @@ function App() {
             sx={{
               fontWeight: 500,
               fontSize: { xs: '1.25rem', md: '1.5rem' },
-              mb: 3,
+              mb: 1.5,
               letterSpacing: '-0.01em'
             }}
           >
@@ -403,8 +407,8 @@ function App() {
                 fontSize: { xs: '0.875rem', md: '1rem' },
                 maxWidth: '800px',
                 mx: 'auto',
-                lineHeight: 1.6,
-                mb: 2
+                lineHeight: 1.5,
+                mb: 1
               }}
             >
               <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
@@ -417,7 +421,7 @@ function App() {
             justifyContent: 'flex-end',
             maxWidth: '800px',
             mx: 'auto',
-            mt: 2
+            mt: 1
           }}>
             <FormControlLabel
               control={

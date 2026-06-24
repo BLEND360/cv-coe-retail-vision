@@ -160,13 +160,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No GPU detected, using CPU")
 
-    # Pre-open the default brand's video capture
-    default_brand = os.environ.get("BRAND", "").lower() or "blend360"
-    logger.info(f"Using video for brand: {default_brand}")
-    if get_capture_for_brand(default_brand) is None:
-        logger.error("Failed to open default brand video on startup.")
+    # Pre-open EVERY brand's video capture so the first click on a non-default
+    # brand doesn't pay the VideoCapture open/seek cost (the reason non-default
+    # brands felt slow on first interaction).
+    for bkey in BRAND_VIDEO_MAP.keys():
+        if get_capture_for_brand(bkey) is None:
+            logger.error(f"Failed to open video for brand {bkey} on startup.")
 
-    # Preload one YOLOE instance per distinct brand class set
+    # Preload one YOLOE instance per distinct brand class set and warm it on a
+    # full-size (640px) frame. The real inference path resizes to 640; warming at
+    # that size pre-pays the cuDNN/JIT autotune so the FIRST real click is fast
+    # for every brand, not just the default.
     try:
         seen = set()
         for bkey in ("blend360", "hyatt"):  # one per distinct class set
@@ -179,11 +183,11 @@ async def lifespan(app: FastAPI):
             if yolo_e_model is None:
                 yolo_e_model = model  # default handle
             try:
-                dummy = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
+                dummy = Image.fromarray(np.zeros((640, 640, 3), dtype=np.uint8))
                 model.predict(dummy, conf=0.1, verbose=False)
             except Exception as warmup_err:
                 logger.warning(f"Warmup failed (non-critical): {warmup_err}")
-        logger.info("Brand models preloaded")
+        logger.info("Brand models preloaded and warmed at 640px")
     except Exception as e:
         logger.error(f"Error preloading brand models: {e}")
 
