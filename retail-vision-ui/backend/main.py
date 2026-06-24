@@ -35,6 +35,12 @@ BRAND_CLASSES_MAP = {
     "hyatt":        HOSPITALITY_CLASSES,
 }
 
+BRAND_VIDEO_MAP = {
+    "under-armour": "../public/Under-Armour.mp4",
+    "blend360":     "../public/The BLEND360 Approach.mp4",
+    "hyatt":        "../public/Hyatt.mp4",
+}
+
 
 def get_startup_classes():
     brand_key = os.environ.get("BRAND", "").lower()
@@ -51,6 +57,33 @@ def classes_for_brand(brand_key):
 def _class_key(classes):
     """Order-preserving cache key for a class list."""
     return tuple(classes)
+
+
+def video_path_for_brand(brand_key):
+    key = (brand_key or os.environ.get("BRAND", "")).lower()
+    return (
+        BRAND_VIDEO_MAP.get(key)
+        or os.environ.get("VIDEO_PATH")
+        or "../public/The BLEND360 Approach.mp4"
+    )
+
+
+def get_capture_for_brand(brand_key):
+    key = (brand_key or os.environ.get("BRAND", "")).lower() or "blend360"
+    cap = _video_caps.get(key)
+    if cap is not None and cap.isOpened():
+        return cap
+    path = video_path_for_brand(brand_key)
+    if not os.path.exists(path):
+        logger.error(f"Video file not found for brand {key}: {path}")
+        return None
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        logger.error(f"Failed to open video for brand {key}: {path}")
+        return None
+    _video_caps[key] = cap
+    logger.info(f"Opened video capture for brand {key}: {path}")
+    return cap
 
 
 # Backwards-compatible alias for any code that still references YOLOE_CLASSES
@@ -122,22 +155,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No GPU detected, using CPU")
 
-    # Support both local dev and Docker paths
-    BRAND_VIDEO_MAP = {
-        "under-armour": "../public/Under-Armour.mp4",
-        "blend360":     "../public/The BLEND360 Approach.mp4",
-        "hyatt":        "../public/Hyatt.mp4",
-    }
-    brand_key = os.environ.get("BRAND", "").lower()
-    video_path = (
-        BRAND_VIDEO_MAP.get(brand_key)
-        or os.environ.get("VIDEO_PATH")
-        or "../public/The BLEND360 Approach.mp4"
-    )
-    logger.info(f"Using video path: {video_path} (BRAND={brand_key or 'unset'})")
-
-    if not load_video(video_path):
-        logger.error("Failed to load video on startup.")
+    # Pre-open the default brand's video capture
+    default_brand = os.environ.get("BRAND", "").lower() or "blend360"
+    logger.info(f"Using video for brand: {default_brand}")
+    if get_capture_for_brand(default_brand) is None:
+        logger.error("Failed to open default brand video on startup.")
 
     # Load YOLO-E v8l model with better error handling
     try:
@@ -159,12 +181,12 @@ async def lifespan(app: FastAPI):
         logger.warning("Will use fallback models for inference")
 
     yield
-    
+
     # Cleanup on shutdown
-    global video_cap
-    if video_cap is not None:
-        video_cap.release()
-        logger.info("Video capture released")
+    for cap in _video_caps.values():
+        if cap is not None:
+            cap.release()
+    logger.info("All video captures released")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -187,7 +209,7 @@ if os.path.isdir(FRONTEND_DIR):
         app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
 
 # Global variables for model and video capture
-video_cap = None
+_video_caps = {}  # brand_key -> cv2.VideoCapture
 # Cache of YOLOE instances keyed by class tuple. Each instance has its classes
 # set exactly once at load, so YOLOE never reshapes its class head at runtime.
 _models = {}
@@ -347,27 +369,21 @@ def load_video(video_path: str):
         return False
 
 
-def get_frame_at_time(target_time: float) -> np.ndarray:
+def get_frame_at_time(target_time: float, brand_key=None) -> np.ndarray:
     """Get frame at specific time in video"""
-    global video_cap
-    if video_cap is None:
+    cap = get_capture_for_brand(brand_key)
+    if cap is None:
         return None
-
-    fps = video_cap.get(cv2.CAP_PROP_FPS)
-    total_frames = video_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     target_frame = int(target_time * fps)
-
-    if target_frame >= total_frames:  # Loop video if end is reached
-        video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    if target_frame >= total_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         target_frame = 0
         logger.info("Video looped to beginning.")
-
-    video_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
-    ret, frame = video_cap.read()
-
-    if ret:
-        return frame
-    return None
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ret, frame = cap.read()
+    return frame if ret else None
 
 
 def find_object_at_pixel(
@@ -720,11 +736,12 @@ async def health_check():
 @app.get("/api/video-status", response_model=VideoStatus)
 async def get_video_status():
     """Get the current status of the loaded video."""
-    if video_cap is None:
+    cap = get_capture_for_brand(None)
+    if cap is None:
         return VideoStatus(is_loaded=False, total_frames=0, fps=0, duration=0)
 
-    total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = video_cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
     duration = total_frames / fps if fps > 0 else 0
 
     return VideoStatus(
@@ -874,14 +891,15 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
     """Get YOLO-E v8l inference results for a video frame with text prompts"""
     try:
         # Get current frame from video (or use a default frame)
-        if video_cap is not None:
+        cap = get_capture_for_brand(None)
+        if cap is not None:
             # Get current frame position
-            current_frame = int(video_cap.get(cv2.CAP_PROP_POS_FRAMES))
+            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
             if current_frame <= 0:
                 # If at beginning, get first frame
-                video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-            ret, frame = video_cap.read()
+            ret, frame = cap.read()
             if not ret:
                 # If no frame available, create a test frame
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
