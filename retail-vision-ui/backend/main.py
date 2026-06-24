@@ -140,6 +140,11 @@ def _get_text_pe_direct(texts: List[str], model):
     from ultralytics.nn.modules.head import YOLOEDetect
     head = model.model.model[-1]
     assert isinstance(head, YOLOEDetect)
+    # Build the embeddings on the YOLOE model's device. On GPU the head lives on
+    # cuda while MobileCLIP features may be produced on a different device; align
+    # them here so head.reprta() does not hit a cpu/cuda tensor-device mismatch.
+    model_device = next(model.model.parameters()).device
+    txt_feats = txt_feats.to(model_device)
     return F.normalize(head.reprta(txt_feats), dim=-1, p=2)
 # --- End MobileCLIP fix ---
 
@@ -313,11 +318,20 @@ def _build_model_with_classes(classes):
         if not download_yolo_e_v8l_model_direct():
             raise RuntimeError("Failed to download YOLO-E v8l model")
     model = YOLOE(model_path)
+    # Move the model to the compute device BEFORE building text embeddings, so the
+    # detection head and the class embeddings set below live on the same device as
+    # inference. On GPU, building/setting embeddings against a CPU-resident model
+    # triggers a cpu/cuda tensor-device mismatch at predict time.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        model.to(device)
+    except Exception as move_err:
+        logger.warning(f"Could not move YOLOE model to {device}: {move_err}")
     text_pe = _get_text_pe_direct(classes, model)
     if text_pe is None:
         text_pe = model.get_text_pe(classes)
     model.set_classes(classes, text_pe)
-    logger.info(f"Built YOLOE instance for classes: {classes}")
+    logger.info(f"Built YOLOE instance on {device} for {len(classes)} classes")
     return model
 
 
