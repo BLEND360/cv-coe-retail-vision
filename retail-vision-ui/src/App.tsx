@@ -1,10 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { CssBaseline, Box, Paper, Typography, Switch, FormControlLabel } from '@mui/material';
+import { Tabs, Tab } from '@mui/material';
 import VideoPlayer from './components/VideoPlayer';
 import InferencePanel from './components/InferencePanel';
 import ShoppingCart from './components/ShoppingCart';
-import { brand } from './config/brands';
+import brands from './config/brands';
+import { useBrand, useBrandKey } from './config/BrandContext';
 import type { CartItem, ProductCartItem, ExperienceCartItem } from './types';
 import './App.css';
 
@@ -113,6 +115,9 @@ const theme = createTheme({
 });
 
 function App() {
+  const brand = useBrand();
+  const { brandKey, setBrandKey } = useBrandKey();
+
   const [lastClickData, setLastClickData] = useState<{ x: number; y: number; currentTime: number; frameWidth: number; frameHeight: number } | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [showInferencePanel, setShowInferencePanel] = useState(true);
@@ -128,6 +133,13 @@ function App() {
   // Bumped each time a new inference brings in new menu items, so the cart UI can
   // auto-expand the menu section.
   const [menuRefreshVersion, setMenuRefreshVersion] = useState(0);
+
+  const handleBrandChange = useCallback((_e: React.SyntheticEvent, newKey: string) => {
+    setBrandKey(newKey);
+    setCartItems([]);
+    setLastClickData(null);
+    setMenuRefreshVersion(0);
+  }, [setBrandKey]);
 
   // Set-based catalog matching: a catalog entry fires only when ANY of its trigger
   // sets is fully present in the inference's detections. For hospitality brands
@@ -223,7 +235,7 @@ function App() {
       ...(isClothing && { size: 'M', color: 'Black' }),
     };
     setCartItems(prev => [...prev, fallback]);
-  }, []);
+  }, [brand]);
 
   const removeFromCart = (itemId: string) => {
     setCartItems(prev => prev.filter(item => item.id !== itemId));
@@ -291,14 +303,31 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ 
-        height: '100vh', 
+      <Box sx={{
+        height: '100vh',
         bgcolor: 'background.default',
         background: '#FFFFFF',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative'
       }}>
+        {/* Brand Tab Bar */}
+        <Tabs
+          value={brandKey}
+          onChange={handleBrandChange}
+          variant="fullWidth"
+          sx={{
+            borderBottom: '1px solid rgba(0,0,0,0.08)',
+            flexShrink: 0,
+            bgcolor: 'background.paper',
+            '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, fontSize: '1rem' },
+          }}
+        >
+          {Object.entries(brands).map(([key, cfg]) => (
+            <Tab key={key} value={key} label={cfg.name} />
+          ))}
+        </Tabs>
+
         {/* Logo in upper left corner */}
         <Box sx={{ 
           position: 'absolute',
@@ -397,9 +426,9 @@ function App() {
         </Box>
 
         {/* Main Content Grid - Takes remaining space */}
-        <Box sx={{ 
-          flex: 1, 
-          px: 6, // Increased padding for better symmetry
+        <Box key={brandKey} sx={{
+          flex: 1,
+          px: 6,
           pb: 4,
           minHeight: 0, // Important for flex child to shrink
           overflow: 'hidden' // Prevent content from expanding beyond container
