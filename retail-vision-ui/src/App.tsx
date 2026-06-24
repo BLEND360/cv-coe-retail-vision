@@ -328,8 +328,17 @@ function App() {
           ))}
         </Tabs>
 
+        {/* Wrapper below the tab bar — positioning context for the logo */}
+        <Box sx={{
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0
+        }}>
+
         {/* Logo in upper left corner */}
-        <Box sx={{ 
+        <Box sx={{
           position: 'absolute',
           top: 24,
           left: 24,
@@ -355,11 +364,11 @@ function App() {
           textAlign: 'center',
           flexShrink: 0
         }}>
-          <Typography 
-            variant="h1" 
-            component="h1" 
-            sx={{ 
-              fontWeight: 600, 
+          <Typography
+            variant="h1"
+            component="h1"
+            sx={{
+              fontWeight: 600,
               color: 'text.primary',
               mb: 1,
               fontSize: { xs: '2rem', md: '2.5rem' }
@@ -367,10 +376,10 @@ function App() {
           >
             Retail Vision
           </Typography>
-          <Typography 
-            variant="h4" 
-            color="text.secondary" 
-            sx={{ 
+          <Typography
+            variant="h4"
+            color="text.secondary"
+            sx={{
               fontWeight: 500,
               fontSize: { xs: '1.25rem', md: '1.5rem' },
               mb: 3,
@@ -395,10 +404,10 @@ function App() {
               <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
             </Typography>
           )}
-          
+
           {/* Show Inference Panel Switch */}
-          <Box sx={{ 
-            display: 'flex', 
+          <Box sx={{
+            display: 'flex',
             justifyContent: 'flex-end',
             maxWidth: '800px',
             mx: 'auto',
@@ -532,6 +541,7 @@ function App() {
             </Box>
           </Box>
         </Box>
+        </Box>{/* end wrapper below tab bar */}
       </Box>
     </ThemeProvider>
   );
