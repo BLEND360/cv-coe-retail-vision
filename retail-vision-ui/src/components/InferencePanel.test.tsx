@@ -2,6 +2,9 @@ import { render, act } from '@testing-library/react';
 import { BrandProvider } from '../config/BrandContext';
 import InferencePanel from './InferencePanel';
 
+const originalFetch = global.fetch;
+afterEach(() => { global.fetch = originalFetch; });
+
 test('inference request includes the active brand key', async () => {
   const fetchMock = jest.fn().mockResolvedValue({
     ok: true,

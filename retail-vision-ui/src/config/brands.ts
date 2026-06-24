@@ -110,6 +110,4 @@ const brands: Record<string, BrandConfig> = {
   },
 };
 
-const brandKey = process.env.REACT_APP_BRAND || 'blend360';
-export const brand: BrandConfig = brands[brandKey] || brands['under-armour'];
 export default brands;

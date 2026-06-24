@@ -321,6 +321,7 @@ function App() {
           value={brandKey}
           onChange={handleBrandChange}
           variant="fullWidth"
+          aria-label="Brand selector"
           sx={{
             borderBottom: '1px solid rgba(0,0,0,0.08)',
             flexShrink: 0,
