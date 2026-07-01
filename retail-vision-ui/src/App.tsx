@@ -120,7 +120,6 @@ const TAB_ORDER = ['blend360', 'under-armour', 'hyatt'];
 function App() {
   const brand = useBrand();
   const { brandKey, setBrandKey } = useBrandKey();
-  const apiBase = process.env.REACT_APP_API_URL ?? 'http://localhost:8000';
 
   const [lastClickData, setLastClickData] = useState<{ x: number; y: number; currentTime: number; frameWidth: number; frameHeight: number } | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -340,14 +339,6 @@ function App() {
           ))}
         </Tabs>
 
-        {/* Hidden preloaders: warm the browser cache for every brand video at
-            startup so switching tabs plays the video immediately (the keyed
-            content subtree below remounts on switch and would otherwise refetch). */}
-        <Box sx={{ display: 'none' }} aria-hidden>
-          {Object.values(brands).map((cfg, i) => (
-            <video key={i} src={`${apiBase}${cfg.videoUrl}`} preload="auto" muted />
-          ))}
-        </Box>
 
         {/* Wrapper below the tab bar — positioning context for the logo */}
         <Box sx={{
