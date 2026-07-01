@@ -14,6 +14,7 @@ import logging
 import base64
 from PIL import Image
 import os
+import re
 import urllib.request
 import supervision as sv
 import torch
@@ -970,16 +971,71 @@ async def get_yolo_e_v8l_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Serve video files via StaticFiles. Starlette's StaticFiles handles HTTP Range
-# requests (seeking) efficiently with proper file I/O — the previous hand-rolled
-# 64KB chunk generator throttled throughput to ~0.35 MB/s, which made non-default
-# brand videos take many seconds to start. StaticFiles serves the same files ~6x
-# faster. Mounted before the SPA "/" mount so /videos/* resolves here first.
+# Serve video files with HTTP Range support so the browser can seek and knows the
+# file length. Starlette 0.36.3's StaticFiles does NOT implement Range (returns 200,
+# no Accept-Ranges) which left videos non-seekable. We handle Range here and stream
+# in 1MB chunks (the old 64KB generator was the throughput bottleneck; 1MB is fast).
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "../public")
 if not os.path.isdir(VIDEO_DIR):
     VIDEO_DIR = "/app/public"
 
-app.mount("/videos", StaticFiles(directory=VIDEO_DIR, check_dir=False), name="videos")
+_VIDEO_CHUNK = 1024 * 1024  # 1MB
+
+
+@app.get("/videos/{video_name:path}")
+async def serve_video(video_name: str, request: Request):
+    video_file = os.path.join(VIDEO_DIR, video_name)
+    if not os.path.isfile(video_file):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    file_size = os.path.getsize(video_file)
+    common = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": "video/mp4",
+        "Cache-Control": "public, max-age=86400",
+    }
+
+    range_header = request.headers.get("range")
+    if range_header:
+        m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+        if not m:
+            raise HTTPException(status_code=416, detail="Invalid Range header")
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else file_size - 1
+        end = min(end, file_size - 1)
+        if start > end:
+            raise HTTPException(status_code=416, detail="Range not satisfiable")
+        length = end - start + 1
+
+        def iter_range():
+            with open(video_file, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    data = f.read(min(_VIDEO_CHUNK, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        headers = {
+            **common,
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(length),
+        }
+        return StreamingResponse(iter_range(), status_code=206, headers=headers)
+
+    def iter_all():
+        with open(video_file, "rb") as f:
+            while True:
+                data = f.read(_VIDEO_CHUNK)
+                if not data:
+                    break
+                yield data
+
+    return StreamingResponse(
+        iter_all(), headers={**common, "Content-Length": str(file_size)}
+    )
 
 
 # Serve frontend as SPA with html=True (client-side routing)
