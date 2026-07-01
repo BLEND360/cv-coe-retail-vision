@@ -202,6 +202,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
+@app.middleware("http")
+async def html_no_cache(request: Request, call_next):
+    """Force browsers to revalidate index.html on every load. CRA's JS/CSS assets
+    are content-hashed (safe to cache long), but a cached index.html pins the old
+    bundle and hides new deploys — which is exactly what stale-served an old build
+    with the removed video preloaders. no-cache = revalidate, not "don't store"."""
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # CORS middleware to allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
