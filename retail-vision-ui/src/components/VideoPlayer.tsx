@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { brand } from '../config/brands';
+import { useBrand } from '../config/BrandContext';
 import { 
   Box, 
   Typography, 
@@ -22,6 +22,7 @@ interface VideoPlayerProps {
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ onTimeUpdate, onVideoClick }) => {
+  const brand = useBrand();
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -175,6 +176,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ onTimeUpdate, onVideoClick })
         <video
           ref={videoRef}
           src={videoUrl}
+          preload="auto"
           style={{
             width: '100%',
             height: '100%',

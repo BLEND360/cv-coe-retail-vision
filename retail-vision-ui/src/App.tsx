@@ -1,22 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { CssBaseline, Box, Paper, Typography, Switch, FormControlLabel } from '@mui/material';
+import { Tabs, Tab } from '@mui/material';
 import VideoPlayer from './components/VideoPlayer';
 import InferencePanel from './components/InferencePanel';
 import ShoppingCart from './components/ShoppingCart';
-import { brand } from './config/brands';
+import brands from './config/brands';
+import { useBrand, useBrandKey } from './config/BrandContext';
+import type { CartItem, ProductCartItem, ExperienceCartItem } from './types';
 import './App.css';
-
-interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  detectionId: number;
-  confidence: number;
-  size?: string;
-  color?: string;
-}
 
 const theme = createTheme({
   palette: {
@@ -122,7 +114,13 @@ const theme = createTheme({
   },
 });
 
+// Brand tab order (left to right). BLEND360 leads; unknown keys are ignored.
+const TAB_ORDER = ['blend360', 'under-armour', 'hyatt'];
+
 function App() {
+  const brand = useBrand();
+  const { brandKey, setBrandKey } = useBrandKey();
+
   const [lastClickData, setLastClickData] = useState<{ x: number; y: number; currentTime: number; frameWidth: number; frameHeight: number } | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [showInferencePanel, setShowInferencePanel] = useState(true);
@@ -135,24 +133,117 @@ function App() {
     setLastClickData(clickData);
   };
 
-  const addToCart = (detection: { id: number; class_name: string; confidence: number }) => {
-    const cartItemId = `${detection.id}-${Date.now()}`;
-    
-    // List of clothing items that need size and color options
+  // Bumped each time a new inference brings in new menu items, so the cart UI can
+  // auto-expand the menu section.
+  const [menuRefreshVersion, setMenuRefreshVersion] = useState(0);
+
+  const handleBrandChange = useCallback((_e: React.SyntheticEvent, newKey: string) => {
+    setBrandKey(newKey);
+    setCartItems([]);
+    setLastClickData(null);
+    setMenuRefreshVersion(0);
+  }, [setBrandKey]);
+
+  // Set-based catalog matching: a catalog entry fires only when ANY of its trigger
+  // sets is fully present in the inference's detections. For hospitality brands
+  // (catalog defined), every inference rebuilds the menu (clears prior unbooked /
+  // unordered items). For retail brands (no catalog), single-class clicks add a
+  // $99 generic item directly to the cart.
+  const handleInference = useCallback((
+    clickedDetection: { id: number; class_name: string; confidence: number } | null,
+    detections: Array<{ id: number; class_name: string; confidence: number }>,
+  ) => {
+    const allowed = new Set(brand.yoloeClasses.map(c => c.toLowerCase()));
+    const inBrand = (c: { class_name: string }) => allowed.has(c.class_name.toLowerCase());
+    const brandDetections = detections.filter(inBrand);
+    const brandClicked = clickedDetection && inBrand(clickedDetection) ? clickedDetection : null;
+
+    const baseId = `${Date.now()}`;
+    const isHospitality = (brand.catalog ?? []).length > 0;
+
+    // Keep only items the user has confirmed (booked experiences + ordered products).
+    // Everything else is "menu" content that gets rebuilt by the new inference.
+    const keepConfirmed = (items: CartItem[]) => items.filter(item =>
+      (item.kind === 'experience' && item.booked) ||
+      (item.kind === 'product' && item.ordered)
+    );
+
+    if (isHospitality) {
+      const detectedClasses = new Set(brandDetections.map(d => d.class_name.toLowerCase()));
+      const matched = (brand.catalog ?? []).filter(entry =>
+        entry.triggers.some(triggerSet =>
+          triggerSet.every(t => detectedClasses.has(t.toLowerCase()))
+        )
+      );
+
+      if (matched.length === 0) {
+        // Clear menu, keep cart. Don't bump menuRefreshVersion (no new menu items).
+        setCartItems(keepConfirmed);
+        return;
+      }
+
+      const newExperiences: ExperienceCartItem[] = [];
+      const newProducts: ProductCartItem[] = [];
+
+      matched.forEach(entry => {
+        if (entry.kind === 'experience') {
+          entry.options.forEach((opt, idx) => {
+            newExperiences.push({
+              kind: 'experience',
+              id: `${baseId}-${entry.id}-exp-${idx}`,
+              name: opt.name,
+              time: opt.time,
+              duration: opt.duration,
+              selected: idx < 2,
+              booked: false,
+              detectionId: brandClicked?.id ?? -1,
+              confidence: brandClicked?.confidence ?? 1,
+            });
+          });
+        } else {
+          entry.items.forEach((item, idx) => {
+            newProducts.push({
+              kind: 'product',
+              id: `${baseId}-${entry.id}-prod-${idx}`,
+              name: item.name,
+              price: item.price,
+              quantity: 1,
+              selected: true,
+              ordered: false,
+              detectionId: brandClicked?.id ?? -1,
+              confidence: brandClicked?.confidence ?? 1,
+              ...(item.size !== undefined && { size: item.size }),
+              ...(item.sizes && item.sizes.length > 0 && { sizes: item.sizes }),
+              ...(item.colors && item.colors.length > 0 && { color: item.colors[0] }),
+            });
+          });
+        }
+      });
+
+      setCartItems(prev => [...keepConfirmed(prev), ...newExperiences, ...newProducts]);
+      setMenuRefreshVersion(v => v + 1);
+      return;
+    }
+
+    // Retail fallback (brand has no catalog).
+    if (!brandClicked) return;
+    const className = brandClicked.class_name.toLowerCase();
     const clothingItems = ['blazer', 'shirt', 'shorts', 'running pants', 'running shoes', 'jacket', 'gloves'];
-    const isClothing = clothingItems.includes(detection.class_name.toLowerCase());
-    
-    const newItem: CartItem = {
-      id: cartItemId,
-      name: detection.class_name,
+    const isClothing = clothingItems.includes(className);
+    const fallback: ProductCartItem = {
+      kind: 'product',
+      id: `${brandClicked.id}-${baseId}`,
+      name: brandClicked.class_name,
       price: 99,
       quantity: 1,
-      detectionId: detection.id,
-      confidence: detection.confidence,
-      ...(isClothing && { size: 'M', color: 'Black' })
+      selected: true,
+      ordered: true,
+      detectionId: brandClicked.id,
+      confidence: brandClicked.confidence,
+      ...(isClothing && { size: 'M', color: 'Black' }),
     };
-    setCartItems(prev => [...prev, newItem]);
-  };
+    setCartItems(prev => [...prev, fallback]);
+  }, [brand]);
 
   const removeFromCart = (itemId: string) => {
     setCartItems(prev => prev.filter(item => item.id !== itemId));
@@ -163,42 +254,103 @@ function App() {
       removeFromCart(itemId);
       return;
     }
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, quantity: newQuantity } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, quantity: newQuantity }
+          : item
       )
     );
   };
 
   const updateSize = (itemId: string, newSize: string) => {
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, size: newSize } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, size: newSize }
+          : item
       )
     );
   };
 
   const updateColor = (itemId: string, newColor: string) => {
-    setCartItems(prev => 
-      prev.map(item => 
-        item.id === itemId ? { ...item, color: newColor } : item
+    setCartItems(prev =>
+      prev.map(item =>
+        item.id === itemId && item.kind === 'product'
+          ? { ...item, color: newColor }
+          : item
       )
+    );
+  };
+
+  const toggleSelected = (itemId: string) => {
+    setCartItems(prev =>
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        if (item.kind === 'experience' && !item.booked) return { ...item, selected: !item.selected };
+        if (item.kind === 'product' && !item.ordered) return { ...item, selected: !item.selected };
+        return item;
+      })
+    );
+  };
+
+  const confirmSelected = () => {
+    setCartItems(prev =>
+      prev.map(item => {
+        if (item.kind === 'experience' && item.selected && !item.booked) {
+          return { ...item, booked: true, selected: false };
+        }
+        if (item.kind === 'product' && item.selected && !item.ordered) {
+          return { ...item, ordered: true, selected: false };
+        }
+        return item;
+      })
     );
   };
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ 
-        height: '100vh', 
+      <Box sx={{
+        minHeight: '100vh',
+        overflowY: 'auto',
         bgcolor: 'background.default',
         background: '#FFFFFF',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative'
       }}>
+        {/* Brand Tab Bar */}
+        <Tabs
+          value={brandKey}
+          onChange={handleBrandChange}
+          variant="fullWidth"
+          aria-label="Brand selector"
+          sx={{
+            borderBottom: '1px solid rgba(0,0,0,0.08)',
+            flexShrink: 0,
+            minHeight: 44,
+            bgcolor: 'background.paper',
+            '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, fontSize: '1rem', minHeight: 44 },
+          }}
+        >
+          {TAB_ORDER.filter(key => brands[key]).map(key => (
+            <Tab key={key} value={key} label={brands[key].name} />
+          ))}
+        </Tabs>
+
+
+        {/* Wrapper below the tab bar — positioning context for the logo */}
+        <Box sx={{
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0
+        }}>
+
         {/* Logo in upper left corner */}
-        <Box sx={{ 
+        <Box sx={{
           position: 'absolute',
           top: 24,
           left: 24,
@@ -218,17 +370,17 @@ function App() {
         </Box>
 
         {/* Header Section */}
-        <Box sx={{ 
-          py: 4, 
+        <Box sx={{
+          py: brand.name === 'Hyatt' ? 1.5 : 2,
           px: 6, // Match main content padding for symmetry
           textAlign: 'center',
           flexShrink: 0
         }}>
-          <Typography 
-            variant="h1" 
-            component="h1" 
-            sx={{ 
-              fontWeight: 600, 
+          <Typography
+            variant="h1"
+            component="h1"
+            sx={{
+              fontWeight: 600,
               color: 'text.primary',
               mb: 1,
               fontSize: { xs: '2rem', md: '2.5rem' }
@@ -236,40 +388,42 @@ function App() {
           >
             Retail Vision
           </Typography>
-          <Typography 
-            variant="h4" 
-            color="text.secondary" 
-            sx={{ 
+          <Typography
+            variant="h4"
+            color="text.secondary"
+            sx={{
               fontWeight: 500,
               fontSize: { xs: '1.25rem', md: '1.5rem' },
-              mb: 3,
+              mb: 1.5,
               letterSpacing: '-0.01em'
             }}
           >
             {brand.tagline}
           </Typography>
-          <Typography 
-            variant="body1" 
-            color="text.secondary" 
-            sx={{ 
-              fontWeight: 400,
-              fontSize: { xs: '0.875rem', md: '1rem' },
-              maxWidth: '800px',
-              mx: 'auto',
-              lineHeight: 1.6,
-              mb: 2
-            }}
-          >
-            <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
-          </Typography>
-          
+          {brand.name !== 'Hyatt' && (
+            <Typography
+              variant="body1"
+              color="text.secondary"
+              sx={{
+                fontWeight: 400,
+                fontSize: { xs: '0.875rem', md: '1rem' },
+                maxWidth: '800px',
+                mx: 'auto',
+                lineHeight: 1.5,
+                mb: 1
+              }}
+            >
+              <strong>Concept:</strong> Transform any video or livestream into a shoppable experience. Users can click on products they see on screen and instantly add them to their shopping cart.
+            </Typography>
+          )}
+
           {/* Show Inference Panel Switch */}
-          <Box sx={{ 
-            display: 'flex', 
+          <Box sx={{
+            display: 'flex',
             justifyContent: 'flex-end',
             maxWidth: '800px',
             mx: 'auto',
-            mt: 2
+            mt: 1
           }}>
             <FormControlLabel
               control={
@@ -292,13 +446,14 @@ function App() {
           </Box>
         </Box>
 
-        {/* Main Content Grid - Takes remaining space */}
-        <Box sx={{ 
-          flex: 1, 
-          px: 6, // Increased padding for better symmetry
+        {/* Main Content Grid - fills remaining space on tall viewports, keeps a
+            usable minimum on short ones (the page scrolls rather than clipping). */}
+        <Box key={brandKey} sx={{
+          flex: 1,
+          px: 6,
           pb: 4,
-          minHeight: 0, // Important for flex child to shrink
-          overflow: 'hidden' // Prevent content from expanding beyond container
+          minHeight: { xs: 480, md: 560 },
+          overflow: 'visible'
         }}>
           <Box sx={{ 
             height: '100%', 
@@ -308,7 +463,7 @@ function App() {
             justifyContent: showInferencePanel ? 'flex-start' : 'center' // Center when inference panel is hidden
           }}>
             {/* Video Player - Expands when inference panel is hidden */}
-            <Box sx={{ 
+            <Box sx={{
               flex: showInferencePanel ? '0 0 calc(50% - 6px)' : '0 0 calc(62.5% - 6px)', // Expand to take inference panel space
               height: '100%',
               transition: 'flex 0.3s ease-in-out' // Smooth transition
@@ -329,7 +484,7 @@ function App() {
             </Box>
 
             {/* Right Side Panel - Expands when inference panel is hidden */}
-            <Box sx={{ 
+            <Box sx={{
               flex: showInferencePanel ? '0 0 calc(50% - 6px)' : '0 0 calc(37.5% - 6px)', // Expand to take inference panel space
               height: '100%',
               display: 'flex',
@@ -357,7 +512,7 @@ function App() {
                 }}>
                   <InferencePanel 
                     lastClickData={lastClickData}
-                    onAddToCart={addToCart}
+                    onInference={handleInference}
                   />
                 </Paper>
               </Box>
@@ -379,18 +534,27 @@ function App() {
                   flexDirection: 'column',
                   overflow: 'hidden'
                 }}>
-                  <ShoppingCart 
+                  <ShoppingCart
                     cartItems={cartItems}
                     onRemoveItem={removeFromCart}
                     onUpdateQuantity={updateQuantity}
                     onUpdateSize={updateSize}
                     onUpdateColor={updateColor}
+                    onToggleSelected={toggleSelected}
+                    onConfirmSelected={confirmSelected}
+                    menuRefreshVersion={menuRefreshVersion}
+                    layout={
+                      brand.catalog?.some(e => e.kind === 'experience')
+                        ? 'split'
+                        : 'unified'
+                    }
                   />
                 </Paper>
               </Box>
             </Box>
           </Box>
         </Box>
+        </Box>{/* end wrapper below tab bar */}
       </Box>
     </ThemeProvider>
   );

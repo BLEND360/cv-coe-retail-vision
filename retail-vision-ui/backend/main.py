@@ -14,15 +14,81 @@ import logging
 import base64
 from PIL import Image
 import os
+import re
 import urllib.request
 import supervision as sv
 import torch
 import torch.nn.functional as F
 
-# Single source of truth for YOLOE classes
-YOLOE_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
-                 "monitor", "trash can", "chair", "shirt", "running pants",
-                 "running shoes", "jacket", "gloves"]
+# Per-brand YOLOE class lists. The startup list must match what the frontend
+# sends as text_prompt at click time — YOLOE cannot switch class counts
+# post-init without tripping an internal tensor-reshape error.
+RETAIL_CLASSES = ["laptop", "headphones", "glasses", "blazer", "desk", "watch",
+                  "monitor", "trash can", "chair", "shirt", "running pants",
+                  "running shoes", "jacket", "gloves"]
+HOSPITALITY_CLASSES = ["pool", "lounge chair", "floats",
+                       "beach", "ocean",
+                       "golf shorts", "golfer", "golf club",
+                       "food"]
+BRAND_CLASSES_MAP = {
+    "under-armour": RETAIL_CLASSES,
+    "blend360":     RETAIL_CLASSES,
+    "hyatt":        HOSPITALITY_CLASSES,
+}
+
+BRAND_VIDEO_MAP = {
+    "under-armour": "../public/Under-Armour.mp4",
+    "blend360":     "../public/The BLEND360 Approach.mp4",
+    "hyatt":        "../public/Hyatt.mp4",
+}
+
+
+def get_startup_classes():
+    brand_key = os.environ.get("BRAND", "").lower()
+    return BRAND_CLASSES_MAP.get(brand_key, RETAIL_CLASSES)
+
+
+def classes_for_brand(brand_key):
+    """Return the YOLOE class list for a brand, falling back to the BRAND env
+    default and then the retail list."""
+    key = (brand_key or os.environ.get("BRAND", "")).lower()
+    return BRAND_CLASSES_MAP.get(key, RETAIL_CLASSES)
+
+
+def _class_key(classes):
+    """Order-preserving cache key for a class list."""
+    return tuple(classes)
+
+
+def video_path_for_brand(brand_key):
+    key = (brand_key or os.environ.get("BRAND", "")).lower()
+    return (
+        BRAND_VIDEO_MAP.get(key)
+        or os.environ.get("VIDEO_PATH")
+        or "../public/The BLEND360 Approach.mp4"
+    )
+
+
+def get_capture_for_brand(brand_key):
+    key = (brand_key or os.environ.get("BRAND", "")).lower() or "blend360"
+    cap = _video_caps.get(key)
+    if cap is not None and cap.isOpened():
+        return cap
+    path = video_path_for_brand(key)
+    if not os.path.exists(path):
+        logger.error(f"Video file not found for brand {key}: {path}")
+        return None
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        logger.error(f"Failed to open video for brand {key}: {path}")
+        return None
+    _video_caps[key] = cap
+    logger.info(f"Opened video capture for brand {key}: {path}")
+    return cap
+
+
+# Backwards-compatible alias for any code that still references YOLOE_CLASSES
+YOLOE_CLASSES = RETAIL_CLASSES
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,26 +123,29 @@ def _load_mobileclip():
 
 
 @torch.inference_mode()
-def _get_text_pe_direct(texts: List[str]):
+def _get_text_pe_direct(texts: List[str], model):
     """Generate text positional embeddings using our directly-loaded MobileCLIP.
 
     Replicates the logic of YOLOEModel.get_text_pe() but uses the Python
     mobileclip package so we never hit the TorchScript positional embedding bug.
+    Takes the target YOLOE model instance whose detection head builds the embeddings.
     """
     if not _load_mobileclip():
         return None
-
     tokens = _mobileclip_tokenizer(texts).to(
         next(_mobileclip_model.parameters()).device
     )
     txt_feats = _mobileclip_model.encode_text(tokens)
     txt_feats = txt_feats / txt_feats.norm(p=2, dim=-1, keepdim=True)
     txt_feats = txt_feats.reshape(1, len(texts), txt_feats.shape[-1])
-
-    # Pass through the YOLOE detection head's reprta layer (same as get_tpe)
     from ultralytics.nn.modules.head import YOLOEDetect
-    head = yolo_e_model.model.model[-1]
+    head = model.model.model[-1]
     assert isinstance(head, YOLOEDetect)
+    # Build the embeddings on the YOLOE model's device. On GPU the head lives on
+    # cuda while MobileCLIP features may be produced on a different device; align
+    # them here so head.reprta() does not hit a cpu/cuda tensor-device mismatch.
+    model_device = next(model.model.parameters()).device
+    txt_feats = txt_feats.to(model_device)
     return F.normalize(head.reprta(txt_feats), dim=-1, p=2)
 # --- End MobileCLIP fix ---
 
@@ -92,46 +161,65 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No GPU detected, using CPU")
 
-    # Support both local dev and Docker paths
-    video_path = os.environ.get("VIDEO_PATH", "../public/The BLEND360 Approach.mp4")
+    # Pre-open EVERY brand's video capture so the first click on a non-default
+    # brand doesn't pay the VideoCapture open/seek cost (the reason non-default
+    # brands felt slow on first interaction).
+    for bkey in BRAND_VIDEO_MAP.keys():
+        if get_capture_for_brand(bkey) is None:
+            logger.error(f"Failed to open video for brand {bkey} on startup.")
 
-    if not load_video(video_path):
-        logger.error("Failed to load video on startup.")
-
-    # Load YOLO-E v8l model with better error handling
+    # Preload one YOLOE instance per distinct brand class set and warm it on a
+    # full-size (640px) frame. The real inference path resizes to 640; warming at
+    # that size pre-pays the cuDNN/JIT autotune so the FIRST real click is fast
+    # for every brand, not just the default.
     try:
-        logger.info("Attempting to load YOLO-E v8l model...")
-        if not load_yolo_e_model():
-            logger.warning("Failed to initialize YOLO-E v8l model, will use fallback")
-        else:
-            logger.info("YOLO-E v8l model loaded successfully")
-            # Warmup inference to trigger PyTorch JIT compilation
+        seen = set()
+        for bkey in ("blend360", "hyatt"):  # one per distinct class set
+            ckey = _class_key(classes_for_brand(bkey))
+            if ckey in seen:
+                continue
+            seen.add(ckey)
+            model = get_model_for_brand(bkey)
+            global yolo_e_model
+            if yolo_e_model is None:
+                yolo_e_model = model  # default handle
             try:
-                dummy = np.zeros((64, 64, 3), dtype=np.uint8)
-                dummy_pil = Image.fromarray(dummy)
-                yolo_e_model.predict(dummy_pil, conf=0.1, verbose=False)
-                logger.info("Warmup inference complete")
+                dummy = Image.fromarray(np.zeros((640, 640, 3), dtype=np.uint8))
+                model.predict(dummy, conf=0.1, verbose=False)
             except Exception as warmup_err:
-                logger.warning(f"Warmup inference failed (non-critical): {warmup_err}")
+                logger.warning(f"Warmup failed (non-critical): {warmup_err}")
+        logger.info("Brand models preloaded and warmed at 640px")
     except Exception as e:
-        logger.error(f"Error during YOLO-E v8l model loading: {e}")
-        logger.warning("Will use fallback models for inference")
+        logger.error(f"Error preloading brand models: {e}")
 
     yield
-    
+
     # Cleanup on shutdown
-    global video_cap
-    if video_cap is not None:
-        video_cap.release()
-        logger.info("Video capture released")
+    for cap in _video_caps.values():
+        if cap is not None:
+            cap.release()
+    logger.info("All video captures released")
 
 
 app = FastAPI(lifespan=lifespan)
 
+
+@app.middleware("http")
+async def html_no_cache(request: Request, call_next):
+    """Force browsers to revalidate index.html on every load. CRA's JS/CSS assets
+    are content-hashed (safe to cache long), but a cached index.html pins the old
+    bundle and hides new deploys — which is exactly what stale-served an old build
+    with the removed video preloaders. no-cache = revalidate, not "don't store"."""
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # CORS middleware to allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000", "http://localhost:8001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,11 +234,11 @@ if os.path.isdir(FRONTEND_DIR):
         app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
 
 # Global variables for model and video capture
-video_cap = None
-yolo_e_model = None
-# Cache for text embeddings to avoid rebuilding mobileclip on every request
-_cached_text_pe = None
-_cached_prompt_key = None
+_video_caps = {}  # brand_key -> cv2.VideoCapture
+# Cache of YOLOE instances keyed by class tuple. Each instance has its classes
+# set exactly once at load, so YOLOE never reshapes its class head at runtime.
+_models = {}
+yolo_e_model = None  # default model handle (set at startup) for legacy references
 
 
 class ClickInferenceRequest(BaseModel):
@@ -160,6 +248,7 @@ class ClickInferenceRequest(BaseModel):
     frame_width: int
     frame_height: int
     text_prompt: Optional[str] = None
+    brand: Optional[str] = None
 
 
 class DetectionResult(BaseModel):
@@ -240,42 +329,40 @@ def download_yolo_e_v8l_model_direct() -> bool:
         return False
 
 
-def load_yolo_e_model():
-    """Load YOLO-E v8l model for efficient instance segmentation with text prompts"""
-    global yolo_e_model
+def _build_model_with_classes(classes):
+    """Load a fresh YOLOE instance and set `classes` on it exactly once."""
+    model_path = "yoloe-v8l-seg.pt"
+    if not os.path.exists(model_path):
+        if not download_yolo_e_v8l_model_direct():
+            raise RuntimeError("Failed to download YOLO-E v8l model")
+    model = YOLOE(model_path)
+    # Move the model to the compute device BEFORE building text embeddings, so the
+    # detection head and the class embeddings set below live on the same device as
+    # inference. On GPU, building/setting embeddings against a CPU-resident model
+    # triggers a cpu/cuda tensor-device mismatch at predict time.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
-        logger.info("Loading YOLO-E v8l model...")
+        model.to(device)
+    except Exception as move_err:
+        logger.warning(f"Could not move YOLOE model to {device}: {move_err}")
+    text_pe = _get_text_pe_direct(classes, model)
+    if text_pe is None:
+        text_pe = model.get_text_pe(classes)
+    model.set_classes(classes, text_pe)
+    logger.info(f"Built YOLOE instance on {device} for {len(classes)} classes")
+    return model
 
-        # Check if model file already exists
-        model_path = "yoloe-v8l-seg.pt"
 
-        if os.path.exists(model_path):
-            file_size = os.path.getsize(model_path) / (1024 * 1024)
-            logger.info(f"YOLO-E v8l model already exists: {model_path} "
-                       f"({file_size:.1f} MB)")
-        else:
-            # Download fresh model
-            logger.info("YOLO-E v8l model not found, downloading...")
-            if not download_yolo_e_v8l_model_direct():
-                logger.error("Failed to download YOLO-E v8l model")
-                return False
-
-        # Load the model
-        try:
-            yolo_e_model = YOLOE(model_path)
-
-            # Set default classes to limited retail items (also caches embeddings)
-            _set_classes_cached(YOLOE_CLASSES)
-            logger.info(f"YOLO-E v8l model loaded with limited classes: {YOLOE_CLASSES}")
-
-            return True
-        except Exception as load_error:
-            logger.error(f"Failed to load YOLO-E v8l model: {load_error}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Failed to load YOLO-E v8l model: {e}")
-        return False
+def get_model_for_brand(brand_key):
+    """Return a cached YOLOE instance whose classes match the brand. Brands with
+    identical class lists (blend360 + under-armour) share one instance."""
+    classes = classes_for_brand(brand_key)
+    key = _class_key(classes)
+    model = _models.get(key)
+    if model is None:
+        model = _build_model_with_classes(classes)
+        _models[key] = model
+    return model
 
 
 def frame_to_base64(frame: np.ndarray) -> str:
@@ -284,60 +371,22 @@ def frame_to_base64(frame: np.ndarray) -> str:
     return base64.b64encode(buffer).decode('utf-8')
 
 
-def load_video(video_path: str):
-    """Load the video file into a global OpenCV VideoCapture object."""
-    global video_cap
-    try:
-        logger.info(f"Loading video: {video_path}")
 
-        # Check if video file exists
-        if not os.path.exists(video_path):
-            logger.error(f"Video file not found: {video_path}")
-            return False
-
-        # Get file size for progress indication
-        file_size = os.path.getsize(video_path)
-        logger.info(f"Video file size: {file_size / (1024*1024):.2f} MB")
-
-        video_cap = cv2.VideoCapture(video_path)
-        if not video_cap.isOpened():
-            logger.error("Failed to open video file")
-            return False
-
-        # Get video properties
-        total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = video_cap.get(cv2.CAP_PROP_FPS)
-        duration = total_frames / fps if fps > 0 else 0
-
-        logger.info(f"Video loaded successfully: {total_frames} frames, "
-                   f"{fps:.2f} FPS, {duration:.2f}s duration")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load video: {e}")
-        return False
-
-
-def get_frame_at_time(target_time: float) -> np.ndarray:
+def get_frame_at_time(target_time: float, brand_key=None) -> np.ndarray:
     """Get frame at specific time in video"""
-    global video_cap
-    if video_cap is None:
+    cap = get_capture_for_brand(brand_key)
+    if cap is None:
         return None
-
-    fps = video_cap.get(cv2.CAP_PROP_FPS)
-    total_frames = video_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     target_frame = int(target_time * fps)
-
-    if target_frame >= total_frames:  # Loop video if end is reached
-        video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    if target_frame >= total_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         target_frame = 0
         logger.info("Video looped to beginning.")
-
-    video_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
-    ret, frame = video_cap.read()
-
-    if ret:
-        return frame
-    return None
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ret, frame = cap.read()
+    return frame if ret else None
 
 
 def find_object_at_pixel(
@@ -370,51 +419,27 @@ def find_object_at_pixel(
     return None
 
 
-def _set_classes_cached(prompt_classes: List[str]):
-    """Set model classes with cached text embeddings to avoid rebuilding mobileclip."""
-    global _cached_text_pe, _cached_prompt_key
-    prompt_key = tuple(prompt_classes)
-    if _cached_prompt_key == prompt_key and _cached_text_pe is not None:
-        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
-        return
-    try:
-        # Use our direct MobileCLIP loading (bypasses TorchScript pos_embed bug)
-        _cached_text_pe = _get_text_pe_direct(prompt_classes)
-        if _cached_text_pe is None:
-            # Fallback to YOLOE's built-in path
-            _cached_text_pe = yolo_e_model.get_text_pe(prompt_classes)
-        _cached_prompt_key = prompt_key
-        yolo_e_model.set_classes(prompt_classes, _cached_text_pe)
-        logger.info(f"YOLO-E text prompts set (built & cached): {prompt_classes}")
-    except Exception as pe_error:
-        logger.warning(f"Could not get text embeddings: {pe_error} -- using COCO classes")
-        return
-
 
 def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
-                        text_prompt: str = None) -> Dict[str, Any]:
+                        model=None, text_prompt: str = None) -> Dict[str, Any]:
     """Run YOLO-E inference - simple and direct like your reference code"""
     try:
-        if yolo_e_model is None:
+        if model is None:
             return {"error": "No YOLO-E model available"}
 
+        timings: Dict[str, float] = {}
+
         # Convert frame to PIL Image for YOLOE
+        t0 = time.perf_counter()
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(frame_rgb)
+        timings["pil_convert_ms"] = (time.perf_counter() - t0) * 1000
 
-        # Parse text prompt into classes and set them on the model
-        if text_prompt:
-            try:
-                prompt_classes = [cls.strip() for cls in text_prompt.split(',')
-                                if cls.strip()]
-                if prompt_classes:
-                    _set_classes_cached(prompt_classes)
-                else:
-                    logger.warning("No valid classes found in text prompt")
-            except Exception as e:
-                logger.warning(f"Could not set text prompts: {e}")
+        # Classes are fixed at model init; no per-request class switching needed.
+        timings["set_classes_ms"] = 0.0
 
         # Resize for faster inference (YOLO resizes internally anyway)
+        t0 = time.perf_counter()
         INFER_SIZE = 640
         orig_h, orig_w = frame.shape[:2]
         scale = min(INFER_SIZE / orig_w, INFER_SIZE / orig_h)
@@ -424,11 +449,15 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         else:
             scale = 1.0
             infer_image = pil_image
+        timings["resize_ms"] = (time.perf_counter() - t0) * 1000
 
         # Run YOLO-E inference on resized image
-        results = yolo_e_model.predict(infer_image, conf=0.1, verbose=False)
+        t0 = time.perf_counter()
+        results = model.predict(infer_image, conf=0.1, verbose=False)
+        timings["predict_ms"] = (time.perf_counter() - t0) * 1000
 
         if not results or len(results) == 0:
+            logger.info(f"YOLO-E timing (no results) {timings}")
             return {
                 "detections": [],
                 "total_objects": 0,
@@ -437,7 +466,8 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                 "text_prompt_used": text_prompt if text_prompt else "default_classes"
             }
 
-        # Process results from YOLOE
+        # Process results from YOLOE (mask extraction + per-detection annotation)
+        t0 = time.perf_counter()
         result = results[0]
         detections = []
         annotated_frame = frame.copy()
@@ -455,18 +485,18 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
                     confidence = box.conf[0].item()
                     class_id = int(box.cls[0]) if hasattr(box, 'cls') and len(box.cls) > 0 else 0
 
-                    # Get class name from text prompt classes or model names
+                    # Get class name: prefer model.names (set at brand init), fall back to text_prompt
                     class_name = "unknown"
-                    if text_prompt:
+                    if hasattr(model, 'names') and model.names:
+                        if class_id < len(model.names):
+                            class_name = model.names[class_id]
+                        else:
+                            class_name = f"object_{class_id}"
+                    elif text_prompt:
                         prompt_classes = [cls.strip() for cls in text_prompt.split(',')
                                         if cls.strip()]
                         if class_id < len(prompt_classes):
                             class_name = prompt_classes[class_id]
-                        else:
-                            class_name = f"object_{class_id}"
-                    elif hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-                        if class_id < len(yolo_e_model.names):
-                            class_name = yolo_e_model.names[class_id]
                         else:
                             class_name = f"object_{class_id}"
                     else:
@@ -559,6 +589,15 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
         # Highlight the clicked pixel
         cv2.circle(annotated_frame, (clicked_x, clicked_y), 5, (255, 0, 255),
                    -1)
+        timings["postprocess_ms"] = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"YOLO-E timing dets={len(detections)} "
+            f"set_classes={timings['set_classes_ms']:.0f}ms "
+            f"predict={timings['predict_ms']:.0f}ms "
+            f"postprocess={timings['postprocess_ms']:.0f}ms "
+            f"pil={timings['pil_convert_ms']:.0f}ms "
+            f"resize={timings['resize_ms']:.0f}ms"
+        )
 
         return {
             "detections": detections,
@@ -574,11 +613,11 @@ def run_yolo_e_inference(frame: np.ndarray, clicked_x: int, clicked_y: int,
 
 
 def run_yolo_e_v8l_inference(
-    frame: np.ndarray, text_prompt: str, confidence: float = 0.1
+    frame: np.ndarray, text_prompt: str, model=None, confidence: float = 0.1
 ) -> Dict[str, Any]:
     """Run YOLO-E v8l inference using the clean approach from reference code"""
     try:
-        if yolo_e_model is None:
+        if model is None:
             return {"error": "No YOLO-E model available"}
 
         # Convert frame to PIL Image for YOLOE
@@ -592,9 +631,6 @@ def run_yolo_e_v8l_inference(
         if not prompt_classes:
             return {"error": "No valid classes found in text prompt"}
 
-        # Set classes with cached text embeddings
-        _set_classes_cached(prompt_classes)
-
         # Resize for faster inference
         INFER_SIZE = 640
         orig_h, orig_w = frame.shape[:2]
@@ -607,7 +643,7 @@ def run_yolo_e_v8l_inference(
             infer_image = pil_image
 
         # Run YOLO-E inference on resized image
-        results = yolo_e_model.predict(infer_image, conf=confidence, verbose=False)
+        results = model.predict(infer_image, conf=confidence, verbose=False)
 
         if not results or len(results) == 0:
             return {
@@ -670,7 +706,7 @@ def run_yolo_e_v8l_inference(
             logger.warning(f"Supervision annotation failed, using fallback: "
                          f"{sv_error}")
             # Fallback to basic OpenCV annotation
-            return run_yolo_e_inference(frame, 0, 0, text_prompt)
+            return run_yolo_e_inference(frame, 0, 0, model, text_prompt)
 
     except Exception as e:
         logger.error(f"YOLO-E v8l inference error: {e}")
@@ -687,11 +723,12 @@ async def health_check():
 @app.get("/api/video-status", response_model=VideoStatus)
 async def get_video_status():
     """Get the current status of the loaded video."""
-    if video_cap is None:
+    cap = get_capture_for_brand(None)
+    if cap is None:
         return VideoStatus(is_loaded=False, total_frames=0, fps=0, duration=0)
 
-    total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = video_cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
     duration = total_frames / fps if fps > 0 else 0
 
     return VideoStatus(
@@ -706,22 +743,27 @@ async def get_video_status():
 async def get_yolo_e_inference(request: ClickInferenceRequest):
     """Get YOLO-E inference results for a specific pixel click on a video frame"""
     try:
-        # Get frame at the specified video time
-        frame = get_frame_at_time(request.video_time)
+        req_start = time.perf_counter()
+
+        # Get frame at the specified video time (brand-routed)
+        t0 = time.perf_counter()
+        frame = get_frame_at_time(request.video_time, request.brand)
+        frame_fetch_ms = (time.perf_counter() - t0) * 1000
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame not found")
 
-        # Log coordinate information for debugging
         logger.info(f"Click coordinates: ({request.x}, {request.y}) on frame "
                    f"{frame.shape[1]}x{frame.shape[0]}")
-        logger.info(f"Frame dimensions: {frame.shape[1]}x{frame.shape[0]}")
-        logger.info(f"Requested frame dimensions: "
-                   f"{request.frame_width}x{request.frame_height}")
+
+        # Select model for the request's brand
+        model = get_model_for_brand(request.brand)
 
         # Run YOLO-E inference in thread pool to avoid blocking the event loop
+        t0 = time.perf_counter()
         inference_result = await asyncio.to_thread(
-            run_yolo_e_inference, frame, request.x, request.y, request.text_prompt
+            run_yolo_e_inference, frame, request.x, request.y, model, request.text_prompt
         )
+        inference_ms = (time.perf_counter() - t0) * 1000
 
         if "error" in inference_result:
             raise HTTPException(
@@ -729,10 +771,12 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
             )
 
         # Convert frames to base64
+        t0 = time.perf_counter()
         frame_base64 = frame_to_base64(frame)
         annotated_frame_base64 = frame_to_base64(
             inference_result.get("annotated_frame", frame)
         )
+        b64_ms = (time.perf_counter() - t0) * 1000
 
         # Create result
         result = DetectionResult(
@@ -747,6 +791,14 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
             text_prompt_used=inference_result.get("text_prompt_used")
         )
 
+        total_ms = (time.perf_counter() - req_start) * 1000
+        logger.info(
+            f"/api/inference/yolo-e total={total_ms:.0f}ms "
+            f"frame_fetch={frame_fetch_ms:.0f}ms "
+            f"inference={inference_ms:.0f}ms "
+            f"base64={b64_ms:.0f}ms"
+        )
+
         return result
 
     except Exception as e:
@@ -756,14 +808,13 @@ async def get_yolo_e_inference(request: ClickInferenceRequest):
 
 @app.post("/api/yolo-e/update-prompt")
 async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
-    """Update YOLO-E text prompts for object detection"""
+    """Update YOLO-E text prompts for object detection.
+    Note: in the multi-brand model, each model's classes are fixed at init.
+    This endpoint validates the prompt and reports the current default model's classes."""
     try:
-        if yolo_e_model is None:
-            raise HTTPException(
-                status_code=400, detail="YOLO-E model not loaded"
-            )
+        model = get_model_for_brand(None)
 
-        if not hasattr(yolo_e_model, 'set_classes'):
+        if not hasattr(model, 'names'):
             raise HTTPException(
                 status_code=400, detail="YOLO-E model doesn't support text prompts"
             )
@@ -777,16 +828,10 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
                 status_code=400, detail="No valid classes found in text prompt"
             )
 
-        # Update the model's text prompts (invalidates cache for new prompt)
-        try:
-            _set_classes_cached(prompt_classes)
-            logger.info(f"YOLO-E text prompts updated: {prompt_classes}")
-        except Exception as e:
-            logger.error(f"Failed to update YOLO-E text prompts: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+        logger.info(f"YOLO-E text prompt request noted (classes fixed per brand): {prompt_classes}")
 
         return {
-            "message": "YOLO-E text prompts updated successfully",
+            "message": "Prompt noted; classes are fixed per brand model and cannot be changed at runtime",
             "classes": prompt_classes,
             "timestamp": time.time()
         }
@@ -798,15 +843,12 @@ async def update_yolo_e_prompt(request: TextPromptUpdateRequest):
 
 @app.get("/api/yolo-e/current-prompt")
 async def get_current_yolo_e_prompt():
-    """Get current YOLO-E text prompts"""
+    """Get current YOLO-E text prompts for the default brand model"""
     try:
-        if yolo_e_model is None:
-            raise HTTPException(
-                status_code=400, detail="YOLO-E model not loaded"
-            )
+        model = get_model_for_brand(None)
 
-        if hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-            current_classes = list(yolo_e_model.names.values())
+        if hasattr(model, 'names') and model.names:
+            current_classes = list(model.names.values())
             return {
                 "current_prompt": ", ".join(current_classes),
                 "classes": current_classes,
@@ -829,14 +871,15 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
     """Get YOLO-E v8l inference results for a video frame with text prompts"""
     try:
         # Get current frame from video (or use a default frame)
-        if video_cap is not None:
+        cap = get_capture_for_brand(None)
+        if cap is not None:
             # Get current frame position
-            current_frame = int(video_cap.get(cv2.CAP_PROP_POS_FRAMES))
+            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
             if current_frame <= 0:
                 # If at beginning, get first frame
-                video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-            ret, frame = video_cap.read()
+            ret, frame = cap.read()
             if not ret:
                 # If no frame available, create a test frame
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -849,8 +892,9 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
         # Run YOLO-E v8l inference in thread pool to avoid blocking the event loop
+        model = get_model_for_brand(None)
         inference_result = await asyncio.to_thread(
-            run_yolo_e_v8l_inference, frame, request.text_prompt, request.confidence
+            run_yolo_e_v8l_inference, frame, request.text_prompt, model, request.confidence
         )
 
         if "error" in inference_result:
@@ -893,7 +937,8 @@ async def get_yolo_e_v8l_inference(request: YOLOEV8LRequest):
 async def get_yolo_e_v8l_status():
     """Get the status of the YOLO-E v8l model"""
     try:
-        if yolo_e_model is None:
+        model = get_model_for_brand(None)
+        if model is None:
             return {
                 "model_loaded": False,
                 "model_name": "YOLO-E v8l",
@@ -911,9 +956,8 @@ async def get_yolo_e_v8l_status():
 
         # Try to get model properties
         try:
-            if hasattr(yolo_e_model, 'names') and yolo_e_model.names:
-                model_info["available_classes"] = list(
-                    yolo_e_model.names.values())
+            if hasattr(model, 'names') and model.names:
+                model_info["available_classes"] = list(model.names.values())
             else:
                 model_info["available_classes"] = []
         except Exception as e:
@@ -927,11 +971,15 @@ async def get_yolo_e_v8l_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Serve video files with Range request support (enables seeking in browser)
-# Serve video files with Range request support (enables seeking in browser)
+# Serve video files with HTTP Range support so the browser can seek and knows the
+# file length. Starlette 0.36.3's StaticFiles does NOT implement Range (returns 200,
+# no Accept-Ranges) which left videos non-seekable. We handle Range here and stream
+# in 1MB chunks (the old 64KB generator was the throughput bottleneck; 1MB is fast).
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "../public")
 if not os.path.isdir(VIDEO_DIR):
     VIDEO_DIR = "/app/public"
+
+_VIDEO_CHUNK = 1024 * 1024  # 1MB
 
 
 @app.get("/videos/{video_name:path}")
@@ -941,52 +989,52 @@ async def serve_video(video_name: str, request: Request):
         raise HTTPException(status_code=404, detail="Video not found")
 
     file_size = os.path.getsize(video_file)
+    common = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": "video/mp4",
+        "Cache-Control": "public, max-age=86400",
+    }
+
     range_header = request.headers.get("range")
-
     if range_header:
-        range_spec = range_header.replace("bytes=", "")
-        parts = range_spec.split("-")
-        range_start = int(parts[0])
-        range_end = int(parts[1]) if parts[1] else file_size - 1
-        content_length = range_end - range_start + 1
+        m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+        if not m:
+            raise HTTPException(status_code=416, detail="Invalid Range header")
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else file_size - 1
+        end = min(end, file_size - 1)
+        if start > end:
+            raise HTTPException(status_code=416, detail="Range not satisfiable")
+        length = end - start + 1
 
-        def iter_file():
+        def iter_range():
             with open(video_file, "rb") as f:
-                f.seek(range_start)
-                remaining = content_length
+                f.seek(start)
+                remaining = length
                 while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
-                    if not chunk:
+                    data = f.read(min(_VIDEO_CHUNK, remaining))
+                    if not data:
                         break
-                    remaining -= len(chunk)
-                    yield chunk
+                    remaining -= len(data)
+                    yield data
 
-        return StreamingResponse(
-            iter_file(),
-            status_code=206,
-            headers={
-                "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(content_length),
-                "Content-Type": "video/mp4",
-            },
-        )
+        headers = {
+            **common,
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(length),
+        }
+        return StreamingResponse(iter_range(), status_code=206, headers=headers)
 
-    def iter_full_file():
+    def iter_all():
         with open(video_file, "rb") as f:
             while True:
-                chunk = f.read(65536)
-                if not chunk:
+                data = f.read(_VIDEO_CHUNK)
+                if not data:
                     break
-                yield chunk
+                yield data
 
     return StreamingResponse(
-        iter_full_file(),
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-            "Content-Type": "video/mp4",
-        },
+        iter_all(), headers={**common, "Content-Length": str(file_size)}
     )
 
 

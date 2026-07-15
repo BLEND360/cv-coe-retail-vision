@@ -1,12 +1,16 @@
-# Multi-stage Dockerfile for Retail Vision Application
+# Multi-stage Dockerfile for Retail Vision Application (all brands, runtime-switchable)
 # Supports both CPU and GPU (NVIDIA CUDA) automatically
 #
-# CPU build (default):   docker build -t retail-vision .
-# GPU build:             docker build --build-arg BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 -t retail-vision-gpu .
-# Brand build:           docker build --build-arg BRAND=blend360 -t retail-vision-blend .
+# CPU build (default):   docker build -t retail-vision-hyatt .
+# GPU build:             docker build \
+#                          --build-arg BASE_IMAGE=nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 \
+#                          --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121 \
+#                          -t retail-vision-hyatt-gpu .
+# (BASE_IMAGE and TORCH_INDEX_URL must match. The ECS-optimized GPU AMI ships
+# with NVIDIA driver 12.x, which is incompatible with CUDA 11.8 PyTorch wheels.)
 #
-# CPU run:               docker run -p 8000:8000 retail-vision
-# GPU run:               docker run --gpus all -p 8000:8000 retail-vision-gpu
+# CPU run:               docker run -p 8000:8000 retail-vision-hyatt
+# GPU run:               docker run --gpus all -p 8000:8000 retail-vision-hyatt-gpu
 
 ARG BASE_IMAGE=python:3.11-slim
 
@@ -36,11 +40,10 @@ COPY retail-vision-ui/src ./src
 COPY retail-vision-ui/public ./public
 COPY retail-vision-ui/tsconfig.json ./
 
-# Build the application
-# BRAND arg selects logo, video, and tagline (default: under-armour)
-ARG BRAND=blend360
+# Build the application. All brands ship in one image; REACT_APP_BRAND only
+# picks which tab is selected first (switchable at runtime via the tab bar).
 ENV REACT_APP_API_URL="" \
-    REACT_APP_BRAND=${BRAND}
+    REACT_APP_BRAND=blend360
 RUN npm run build
 
 # Stage 2: Python backend with system dependencies
@@ -83,6 +86,15 @@ WORKDIR /app
 # For GPU images, PyTorch with CUDA is installed via requirements
 COPY retail-vision-ui/backend/requirements.txt ./backend/
 
+# If a CUDA-specific PyTorch wheel index is provided (GPU builds), install
+# torch / torchvision from there BEFORE YOLOE so transitive deps don't pull
+# the default PyPI (CUDA 11.8) wheel that won't initialize on driver 12.x.
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+      echo "Installing CUDA-matched torch from $TORCH_INDEX_URL"; \
+      pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchvision; \
+    fi
+
 # Copy YOLOE source from native download stage (avoids QEMU network issues)
 COPY --from=yoloe-src /tmp/yoloe /tmp/yoloe
 RUN pip install --no-cache-dir \
@@ -104,7 +116,7 @@ COPY retail-vision-ui/backend/ ./backend/
 # Copy built frontend from frontend-build stage
 COPY --from=frontend-build /app/frontend/build /var/www/html
 
-# Copy video files for the demo
+# Copy all brand videos (the backend serves the right one per brand at runtime)
 COPY retail-vision-ui/public/*.mp4 ./public/
 
 # Download model files (gitignored, so they must be fetched during build)
@@ -122,10 +134,11 @@ RUN curl --fail -L -o backend/yoloe-v8l-seg.pt \
 # Create necessary directories
 RUN mkdir -p backend/models
 
-# Set environment variables for container deployment
-ARG BRAND=blend360
+# Set environment variables for container deployment. BRAND sets the default
+# brand for requests that omit one; all brands are available at runtime.
 ENV FRONTEND_DIR=/var/www/html \
-    BRAND=${BRAND}
+    VIDEO_PATH="/app/public/The BLEND360 Approach.mp4" \
+    BRAND=blend360
 
 # Set working directory to backend for model path resolution
 WORKDIR /app/backend
@@ -137,10 +150,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Set VIDEO_PATH based on brand at runtime, then start server
-CMD if [ "$BRAND" = "blend360" ]; then \
-      export VIDEO_PATH="/app/public/The BLEND360 Approach.mp4"; \
-    else \
-      export VIDEO_PATH="/app/public/Under-Armour.mp4"; \
-    fi && \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

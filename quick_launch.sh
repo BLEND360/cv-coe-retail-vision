@@ -2,9 +2,10 @@
 
 # Quick Launch Script for Retail Vision
 # Usage:
-#   ./quick_launch.sh                    # Launch with Under Armour (default)
+#   ./quick_launch.sh                    # Launch with BLEND360 (default)
 #   ./quick_launch.sh under-armour       # Launch with Under Armour
 #   ./quick_launch.sh blend360           # Launch with BLEND360
+#   ./quick_launch.sh hyatt              # Launch with Hyatt (hospitality)
 
 set -e
 
@@ -20,9 +21,13 @@ case "$BRAND" in
     VIDEO_PATH="../public/The BLEND360 Approach.mp4"
     echo "Brand: BLEND360"
     ;;
+  hyatt)
+    VIDEO_PATH="../public/Hyatt.mp4"
+    echo "Brand: Hyatt"
+    ;;
   *)
     echo "Unknown brand: $BRAND"
-    echo "Available brands: under-armour, blend360"
+    echo "Available brands: under-armour, blend360, hyatt"
     exit 1
     ;;
 esac
@@ -40,7 +45,7 @@ echo "Ports cleared"
 echo "Starting backend..."
 cd retail-vision-ui/backend
 source venv/bin/activate
-VIDEO_PATH="$VIDEO_PATH" nohup python run_backend.py > ../backend.log 2>&1 &
+BRAND="$BRAND" VIDEO_PATH="$VIDEO_PATH" nohup python run_backend.py > ../backend.log 2>&1 &
 BACKEND_PID=$!
 cd ../..
 echo "Backend started (PID: $BACKEND_PID)"

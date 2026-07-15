@@ -13,7 +13,7 @@ import {
   Paper
 } from '@mui/material';
 import { Psychology, Mouse } from '@mui/icons-material';
-import { brand } from '../config/brands';
+import { useBrand, useBrandKey } from '../config/BrandContext';
 
 interface Detection {
   id: number;
@@ -38,19 +38,24 @@ interface InferenceResult {
 
 interface InferencePanelProps {
   lastClickData?: { x: number; y: number; currentTime: number; frameWidth: number; frameHeight: number } | null;
-  onAddToCart: (detection: { id: number; class_name: string; confidence: number }) => void;
+  onInference: (
+    clickedDetection: { id: number; class_name: string; confidence: number } | null,
+    detections: Array<{ id: number; class_name: string; confidence: number }>,
+  ) => void;
 }
 
 type InferenceType = 'yolo-e';
 
-const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToCart }) => {
+const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onInference }) => {
+  const brand = useBrand();
+  const { brandKey } = useBrandKey();
   const [inferenceData, setInferenceData] = useState<InferenceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAnnotated, setShowAnnotated] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [inferenceType] = useState<InferenceType>('yolo-e');
-  const [textPrompt] = useState<string>(brand.yoloeClasses.join(', '));
+  const textPrompt = brand.yoloeClasses.join(', ');
   const addedDetectionsRef = useRef<Set<string>>(new Set());
   const lastInferenceTimestampRef = useRef<number>(0);
 
@@ -71,7 +76,8 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
         x: clickData.x,
         y: clickData.y,
         frame_width: clickData.frameWidth,
-        frame_height: clickData.frameHeight
+        frame_height: clickData.frameHeight,
+        brand: brandKey,
       };
 
       // Add text prompt for YOLO-E
@@ -100,7 +106,7 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
     } finally {
       setLoading(false);
     }
-  }, [inferenceType, textPrompt]);
+  }, [inferenceType, textPrompt, brandKey]);
 
   // Listen for video clicks from the parent component
   useEffect(() => {
@@ -116,27 +122,15 @@ const InferencePanel: React.FC<InferencePanelProps> = ({ lastClickData, onAddToC
     ) || [];
   }, [inferenceData?.detections]);
 
-  // Automatically add only the clicked object to cart
+  // Fire one inference event per new inference timestamp, passing the full detection list
+  // so the parent can do set-based catalog matching.
   useEffect(() => {
-    if (inferenceData?.clicked_object) {
-      // Check if this is a new inference session
-      const currentTimestamp = inferenceData.timestamp;
-      if (currentTimestamp !== lastInferenceTimestampRef.current) {
-        // Reset added detections for new inference session
-        addedDetectionsRef.current.clear();
-        lastInferenceTimestampRef.current = currentTimestamp;
-      }
-      
-      const detection = inferenceData.clicked_object;
-      const detectionKey = `${detection.id}-${detection.class_name}-${detection.confidence.toFixed(3)}`;
-      
-      // Only add if not already added in this session
-      if (!addedDetectionsRef.current.has(detectionKey)) {
-        onAddToCart(detection);
-        addedDetectionsRef.current.add(detectionKey);
-      }
-    }
-  }, [inferenceData, onAddToCart]);
+    if (!inferenceData) return;
+    const currentTimestamp = inferenceData.timestamp;
+    if (currentTimestamp === lastInferenceTimestampRef.current) return;
+    lastInferenceTimestampRef.current = currentTimestamp;
+    onInference(inferenceData.clicked_object, inferenceData.detections);
+  }, [inferenceData, onInference]);
 
   const getCurrentFrame = () => {
     if (!inferenceData) return null;
